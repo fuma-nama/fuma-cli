@@ -52,7 +52,7 @@ export class DownloadManager {
           comp.subComponents.map((sub) => {
             if (typeof sub === "string") return this.download(connector, sub);
             if (sub.type === "sub-registry") {
-              return this.download(connector, sub.name, sub.subRegistry);
+              return this.download(connector, sub.component, sub.subRegistry);
             }
 
             return this.download(

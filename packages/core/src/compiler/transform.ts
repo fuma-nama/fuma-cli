@@ -28,7 +28,7 @@ export function transformComponent(
   const files: CompiledFile[] = [];
   for (const file of fileGraph.vertices()) {
     const data = fileGraph.getVertex(file)!.data;
-    if (!data.chunks!.has(component)) continue;
+    if (data.chunk !== component) continue;
 
     files.push({
       ...data.resolved!,
@@ -66,13 +66,13 @@ export function transformComponent(
 function hashSubComponentReference(ref: z.input<typeof subComponentReference>): string {
   if (typeof ref === "string") return ref;
   if (ref.type === "sub-registry") {
-    return `sub-registry:${ref.subRegistry}:${ref.name}`;
+    return `sub-registry:${ref.subRegistry}:${ref.component}`;
   }
   return `http:${ref.registryUrl}:${ref.subRegistry ?? ""}:${ref.component}`;
 }
 
 function writeReference(reference: Reference, ctx: CompileComponentContext) {
-  const { component, fileGraph, resolver, subComponents } = ctx;
+  const { fileGraph, resolver, subComponents } = ctx;
 
   if (reference.type === "unknown") {
     console.warn(`Unknown specifier ${reference.specifier}, skipping for now`);
@@ -92,15 +92,11 @@ function writeReference(reference: Reference, ctx: CompileComponentContext) {
   if (reference.type === "sub-component") {
     const resolved = reference.resolved;
 
-    if (resolved.type === "local" && resolved.component === component) {
-      return encodeImport({ type: "local", fileId: getComponentFileId(resolved.file) });
-    }
-
     if (resolved.type === "http") {
       const ref: z.input<typeof subComponentReference> = {
         type: "http",
         registryUrl: resolved.registryUrl,
-        subRegistry: resolved.registryUrl,
+        subRegistry: resolved.subRegistry,
         component: resolved.component,
       };
 
@@ -111,13 +107,14 @@ function writeReference(reference: Reference, ctx: CompileComponentContext) {
       });
     }
 
+    const name = isChunk(resolved.component) ? resolved.component.chunkId : resolved.component.name;
     const ref: z.input<typeof subComponentReference> = resolved.subRegistry
       ? {
           type: "sub-registry",
           subRegistry: resolved.subRegistry,
-          name: resolved.component.name,
+          component: name,
         }
-      : resolved.component.name;
+      : name;
 
     subComponents.set(hashSubComponentReference(ref), ref);
     return encodeImport({ type: "local", fileId: getComponentFileId(resolved.file) });
@@ -145,8 +142,22 @@ function transformFile(filePath: string, ctx: CompileComponentContext): string {
   // Process import paths
   if (imports) {
     transformSpecifiers(ast.program, s, (specifier) => {
-      let meta = imports.get(specifier);
+      let meta: Reference | undefined = imports.get(specifier);
       if (!meta) return;
+
+      if (meta.type === "file") {
+        const data = fileGraph.getVertex(meta.file)?.data;
+
+        if (data && data.chunk && data.resolved)
+          meta = {
+            type: "sub-component",
+            resolved: {
+              type: "local",
+              component: data.chunk,
+              file: data.resolved,
+            },
+          };
+      }
 
       const resolved = onResolveFile ? onResolveFile(meta, { filePath }) : meta;
 

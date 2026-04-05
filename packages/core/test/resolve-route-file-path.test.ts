@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import type { Framework } from "@/config";
+import type { Framework } from "@/constants";
 import { resolveRouteFilePath } from "@/utils/framework";
 
 test("next: app/ + app router route.ts path (incl. optional catch-all)", () => {

@@ -35,61 +35,32 @@ export function generateChunks(prescannedFilePaths: string[], ctx: CompileContex
     return out;
   }
 
-  function generateChunk(data: FileGraphInfo, referrers: Set<string>) {
-    if (data.chunks) return;
-    const components = new Set<Component>();
+  function decideChunk(data: FileGraphInfo, referrers: Set<string>) {
+    if (data.chunk) return;
+    const referrerChunks = new Set<Component | Chunk>();
 
     for (const referrer of referrers) {
-      const referrerChunks = ctx.fileGraph.getVertex(referrer)!.data.chunks;
+      const referrerChunk = ctx.fileGraph.getVertex(referrer)!.data.chunk;
       // wait until all referrers are resolved
-      if (!referrerChunks) return;
+      if (!referrerChunk) return;
 
-      for (const item of referrerChunks) {
-        if (isChunk(item)) {
-          for (const comp of getReferrerComponents(item)) components.add(comp);
-        } else {
-          components.add(item);
-        }
-      }
+      referrerChunks.add(referrerChunk);
     }
 
-    if (components.size === 1) {
-      data.chunks = components;
-    } else if (components.size > 1) {
+    if (referrerChunks.size === 1) {
+      data.chunk = referrerChunks.values().next().value;
+      return;
+    } else if (referrerChunks.size > 1) {
       const chunk: Chunk = {
         // TODO: generate proper id
         chunkId: `chunk-${Date.now()}`,
       };
       chunkGraph.addVertex(chunk, undefined);
-      data.chunks = new Set([chunk]);
+      data.chunk = chunk;
 
-      for (const comp of components) chunkGraph.addEdge(comp, chunk);
-    }
-  }
-
-  function generateEdges(filePath: string, data: FileGraphInfo, referrers: Set<string>) {
-    const fileChunks = data.chunks;
-    if (!fileChunks) return;
-    const referrerChunks = new Set<Component | Chunk>();
-
-    for (const referrer of referrers) {
-      const chunks = fileGraph.getVertex(referrer)!.data.chunks;
-      // wait until all referrers are resolved
-      if (!chunks) return;
-      for (const chunk of chunks) referrerChunks.add(chunk);
-    }
-
-    for (const chunk of fileChunks) referrerChunks.delete(chunk);
-
-    if (referrerChunks.size === 0 || fileChunks.size === 0) return;
-    if (fileChunks.size > 1) {
-      throw new Error(
-        `file "${filePath}" is a part of multiple components, but it is also referenced by "${JSON.stringify(referrerChunks)}", failed to generate sub components.`,
-      );
-    }
-
-    for (const referrerChunk of referrerChunks) {
-      for (const chunk of fileChunks) chunkGraph.addEdge(referrerChunk, chunk);
+      for (const referrerChunk of referrerChunks) {
+        chunkGraph.addEdge(referrerChunk, chunk);
+      }
     }
   }
 
@@ -98,8 +69,7 @@ export function generateChunks(prescannedFilePaths: string[], ctx: CompileContex
   for (const filePath of next) {
     const { data, referrers, referees } = fileGraph.getVertex(filePath)!;
 
-    generateChunk(data, referrers);
-    generateEdges(filePath, data, referrers);
+    decideChunk(data, referrers);
 
     for (const referee of referees) {
       next.add(referee);

@@ -1,4 +1,4 @@
-import type { Framework } from "@/config";
+import type { Framework } from "@/constants";
 import { transformRouteHandler } from "@/macros/route-handler.build";
 import MagicString from "magic-string";
 import path from "node:path";

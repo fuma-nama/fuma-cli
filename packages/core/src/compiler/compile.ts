@@ -12,10 +12,10 @@ import { transformComponent } from "./transform";
 export interface FileGraphInfo {
   scanned?: ScanResult;
   resolved?: ComponentFile;
-  chunks?: Set<Component | Chunk>;
+  chunk?: Component | Chunk;
 }
 
-export type OnResolve = (reference: SourceReference, from: { filePath: string }) => Reference;
+export type OnResolve = (reference: Reference, from: { filePath: string }) => Reference;
 
 export interface CompiledRegistry {
   name: string;
@@ -117,8 +117,14 @@ export async function compile(options: CompileOptions): Promise<CompiledRegistry
     for (const file of comp.files) {
       const filePath = path.resolve(registry.dir, file.path);
       const { data } = ctx.fileGraph.addVertex(filePath, { resolved: file });
-      data.chunks ??= new Set();
-      data.chunks.add(comp);
+
+      if (data.chunk !== comp) {
+        throw new Error(
+          `The same file "${filePath}" must not co-exist in multiple components, detected: ${comp.name} & ${(data.chunk as Component).name}`,
+        );
+      }
+
+      data.chunk = comp;
       filePaths.push(filePath);
     }
   }
@@ -130,22 +136,16 @@ export async function compile(options: CompileOptions): Promise<CompiledRegistry
     chunkGraph: generateChunks(filePaths, ctx),
   };
 
-  const builtComps = registry.components.map((component) => {
-    return [component, transformComponent(component, transformCtx)] as [
-      Component,
-      CompiledComponent,
-    ];
-  });
-
-  for (const [input, comp] of builtComps) {
-    const arr = input.unlisted ? output.info.unlistedIndexes : output.info.indexes;
+  for (const comp of registry.components) {
+    const out = transformComponent(comp, transformCtx);
+    const arr = comp.unlisted ? output.info.unlistedIndexes : output.info.indexes;
 
     arr.push({
-      name: input.name,
-      title: input.title,
-      description: input.description,
+      name: comp.name,
+      title: comp.title,
+      description: comp.description,
     });
-    output.components.push(comp);
+    output.components.push(out);
   }
 
   return output;
@@ -207,7 +207,7 @@ class RegistryResolver {
   }
 }
 
-export type SourceReference =
+export type Reference =
   | RawReference
   | {
       type: "sub-component";
@@ -215,7 +215,7 @@ export type SourceReference =
         | {
             type: "local";
             subRegistry?: string;
-            component: Component;
+            component: Component | Chunk;
             file: ComponentFile;
           }
         | {
@@ -227,5 +227,3 @@ export type SourceReference =
             file: string;
           };
     };
-
-export type Reference = SourceReference;

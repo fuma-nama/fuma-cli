@@ -35,7 +35,7 @@ export const subComponentReference = z.union([
   z.object({
     type: z.literal("sub-registry"),
     subRegistry: z.string(),
-    name: z.string(),
+    component: z.string(),
   }),
   z.object({
     type: z.literal("http"),
