@@ -12,11 +12,9 @@
   ],
   "type": "module",
   "exports": {
-    "./build": "./dist/build/index.js",
-    "./config": "./dist/config.js",
-    "./registry/client": "./dist/registry/client.js",
+    "./compiler": "./dist/compiler/index.js",
+    "./registry/connector": "./dist/registry/connector.js",
     "./registry/installer": "./dist/registry/installer/index.js",
-    "./registry/macros/route-handler": "./dist/registry/macros/route-handler.js",
     "./registry/schema": "./dist/registry/schema.js",
     "./package.json": "./package.json"
   },

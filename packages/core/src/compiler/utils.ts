@@ -1,4 +1,4 @@
-import type { Registry, ComponentFile, Reference } from "./core";
+import type { Registry, ComponentFile, Reference } from "./compile";
 
 export function resolveFromSubRegistry(
   subRegistry: Registry,

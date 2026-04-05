@@ -7,7 +7,7 @@ import type { RegistryConnector } from "@/registry/connector";
 import { createDeps } from "@/registry/installer/dep-manager";
 import { parse } from "oxc-parser";
 import MagicString from "magic-string";
-import { decodeImport, encodeImport, getComponentFileId } from "../protocols/import";
+import { decodeImport, getComponentFileId } from "../protocols/import";
 import type { Awaitable } from "@/types";
 import { transformRouteHandler } from "@/macros/route-handler.build";
 import {

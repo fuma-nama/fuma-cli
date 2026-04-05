@@ -2,7 +2,11 @@ import path from "node:path";
 import { typescriptExtensions } from "@/constants";
 import { type Program, Visitor } from "oxc-parser";
 import type MagicString from "magic-string";
-import type { ImportDeclaration, ImportDeclarationSpecifier } from "@oxc-project/types";
+import type {
+  ImportDeclaration,
+  ImportDeclarationSpecifier,
+  StringLiteral,
+} from "@oxc-project/types";
 
 /**
  * Return the import modifier for `sourceFile` to import `referenceFile`
@@ -31,51 +35,41 @@ export function toImportSpecifier(sourceFile: string, referenceFile: string): st
   return importPath.startsWith("../") ? importPath : `./${importPath}`;
 }
 
-export function transformSpecifiers(
-  program: Program,
-  s: MagicString,
-  transformSpecifier: (value: string) => string | undefined,
-) {
+export function visitSpecifiers(program: Program, specifier: (node: StringLiteral) => void) {
   new Visitor({
     // static imports
     ImportDeclaration(node) {
       const source = node.source;
-      const out = transformSpecifier(source.value);
-      if (out) {
-        s.update(source.start + 1, source.end - 1, out);
-        source.value = out;
-      }
+      specifier(source);
     },
     // dynamic imports
     ImportExpression(node) {
-      if (node.source.type === "Literal") {
-        const source = node.source;
-        const out = transformSpecifier(source.value as string);
-        if (out) {
-          s.update(source.start + 1, source.end - 1, out);
-          source.value = out;
-        }
+      if (node.source.type === "Literal" && typeof node.source.value === "string") {
+        specifier(node.source);
       }
     },
     // exports
     ExportAllDeclaration(node) {
       const source = node.source;
-      const out = transformSpecifier(source.value);
-      if (out) {
-        s.update(source.start + 1, source.end - 1, out);
-        source.value = out;
-      }
+      specifier(source);
     },
     ExportNamedDeclaration(node) {
-      const source = node.source;
-      if (!source) return;
-      const out = transformSpecifier(source.value);
-      if (out) {
-        s.update(source.start + 1, source.end - 1, out);
-        source.value = out;
-      }
+      if (node.source) specifier(node.source);
     },
   }).visit(program);
+}
+
+export function transformSpecifiers(
+  program: Program,
+  s: MagicString,
+  transformSpecifier: (value: string) => string | undefined,
+) {
+  visitSpecifiers(program, (node) => {
+    const out = transformSpecifier(node.value);
+    if (out) {
+      s.update(node.start + 1, node.end - 1, out);
+    }
+  });
 }
 
 function getImportedBinding(

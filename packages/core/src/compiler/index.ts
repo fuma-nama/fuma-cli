@@ -1,36 +1,12 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import picocolors from "picocolors";
-import type { CompiledRegistry } from "@/compiler/core";
+import type { CompiledRegistry } from "@/compiler/compile";
 
-export * from "./core";
-
-export interface MonoRegistry extends CompiledRegistry {
-  registries: CompiledRegistry[];
-}
-
-export interface RegistryGroup {
-  subRegistries: CompiledRegistry[];
-}
-
-export function combineRegistry(
-  root: CompiledRegistry,
-  ...items: CompiledRegistry[]
-): MonoRegistry {
-  return {
-    ...root,
-    info: {
-      ...root.info,
-      registries: items.map((item) => item.name),
-    },
-    registries: items,
-  };
-}
-
-export function group() {}
+export * from "./compile";
 
 export async function writeRegistry(
-  out: CompiledRegistry | MonoRegistry,
+  out: CompiledRegistry,
   options: {
     dir: string;
 
@@ -69,15 +45,13 @@ export async function writeRegistry(
   });
 
   write.push(writeInfo());
-  if ("registries" in out) {
-    for (const child of out.registries) {
-      write.push(
-        writeRegistry(child, {
-          dir: path.join(dir, child.name),
-          log: options.log,
-        }),
-      );
-    }
+  for (const child of out.subRegistries) {
+    write.push(
+      writeRegistry(child, {
+        dir: path.join(dir, child.name),
+        log: options.log,
+      }),
+    );
   }
 
   await Promise.all(write);

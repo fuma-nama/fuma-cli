@@ -1,4 +1,4 @@
-interface Adj<K, V> {
+export interface GraphNode<K, V> {
   data: V;
   referees: Set<K>;
   referrers: Set<K>;
@@ -8,20 +8,23 @@ interface Adj<K, V> {
  * Directed graph: one map entry per vertex holds both referee and referrer sets.
  */
 export class BidirectedGraph<K, V> {
-  private readonly nodes = new Map<K, Adj<K, V>>();
+  private readonly nodes = new Map<K, GraphNode<K, V>>();
 
-  get(k: K): V | undefined {
-    return this.nodes.get(k)?.data;
+  getVertex(k: K): GraphNode<K, V> | undefined {
+    return this.nodes.get(k);
   }
 
   hasVertex(k: K): boolean {
     return this.nodes.has(k);
   }
 
-  addVertex(k: K, v: V): void {
-    if (!this.nodes.has(k)) {
-      this.nodes.set(k, { data: v, referees: new Set(), referrers: new Set() });
-    }
+  addVertex(k: K, v: V): GraphNode<K, V> {
+    const existing = this.nodes.get(k);
+    if (existing) return existing;
+
+    const node: GraphNode<K, V> = { data: v, referees: new Set(), referrers: new Set() };
+    this.nodes.set(k, node);
+    return node;
   }
 
   removeVertex(k: K): void {
@@ -34,7 +37,7 @@ export class BidirectedGraph<K, V> {
     }
   }
 
-  /** Directed arc `from → to` (`from` refers `to`). */
+  /** Directed arc `from → to`. */
   addEdge(from: K, to: K): void {
     const a = this.nodes.get(from);
     const b = this.nodes.get(to);
@@ -58,13 +61,13 @@ export class BidirectedGraph<K, V> {
     return this.nodes.get(from)?.referees.has(to) ?? false;
   }
 
-  /** Vertices that `v` refers to (`v → *`). */
+  /** Vertices that `k` refers to (`k → *`). */
   *referees(k: K): Generator<K, void, undefined> {
     const s = this.nodes.get(k)?.referees;
     if (s) yield* s;
   }
 
-  /** Vertices that refer to `v` (`* → v`). */
+  /** Vertices that refer to `k` (`* → k`). */
   *referrers(k: K): Generator<K, void, undefined> {
     const s = this.nodes.get(k)?.referrers;
     if (s) yield* s;
