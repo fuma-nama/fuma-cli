@@ -1,3 +1,3 @@
-## Fuma's New Package
+## Fuma CLI
 
-Create a new package in my preferences.
+WIP
