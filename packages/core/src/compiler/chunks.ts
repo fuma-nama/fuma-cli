@@ -101,6 +101,8 @@ export function generateChunks(prescannedFilePaths: string[], ctx: CompileContex
           }
         }
       }
+    } else {
+      chunkGraph.addVertex(data.chunk, undefined);
     }
 
     visited.add(filePath);

@@ -141,7 +141,7 @@ export async function compile(options: CompileOptions): Promise<CompiledRegistry
         const filePath = path.resolve(registry.dir, file.path);
         const { data } = ctx.fileGraph.addVertex(filePath, { resolved: file });
 
-        if (data.chunk !== chunk) {
+        if (data.chunk && data.chunk !== chunk) {
           throw new Error(
             `The same file "${filePath}" must not co-exist in multiple components, detected: ${comp.name} & ${(data.chunk as ComponentChunk).component.name}`,
           );

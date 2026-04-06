@@ -48,6 +48,7 @@ export async function resolveFiles(prescannedFilePaths: string[], ctx: CompileCo
   const oxc = new ResolverFactory({
     extensions: [".js", ".jsx", ".ts", ".tsx", ".node"],
     conditionNames: ["node", "import", "require", "default", "types"],
+    tsconfig: "auto",
   });
 
   // absolute path -> info
@@ -153,7 +154,7 @@ async function resolveFile(
 
     if (resolved.type === "file") {
       if (!fileGraph.hasVertex(resolved.file)) {
-        const out = onUnknownFile?.(filePath);
+        const out = onUnknownFile?.(resolved.file);
 
         if (out) {
           fileGraph.addVertex(resolved.file, { resolved: out });
@@ -162,7 +163,7 @@ async function resolveFile(
           return;
         } else {
           throw new Error(
-            `Unknown file: "${filePath}", no info on how the file should be handled. Please define onUnknownFile() on registry-level, or include it in your component.`,
+            `Unknown file: "${resolved.file}", no info on how the file should be handled. Please define onUnknownFile() on registry-level, or include it in your component.`,
           );
         }
       }

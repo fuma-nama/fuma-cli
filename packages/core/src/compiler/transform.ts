@@ -15,9 +15,8 @@ export interface CompileComponentContext extends TransformContext {
   subComponents: Map<string, z.input<typeof subComponentReference>>;
 }
 
-export function transformChunks(ctx: TransformContext): CompiledComponent[] {
+export function transformChunks(ctx: TransformContext) {
   const { chunkGraph, registryMap, root } = ctx;
-  const out: CompiledComponent[] = [];
 
   for (const chunk of chunkGraph.vertices()) {
     if (chunk.type === ChunkType.Group) {
@@ -28,8 +27,6 @@ export function transformChunks(ctx: TransformContext): CompiledComponent[] {
       output.components.push(transformComponent(chunk, chunk.component, ctx));
     }
   }
-
-  return out;
 }
 
 function transformComponent(
