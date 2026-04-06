@@ -45,7 +45,7 @@ export async function writeRegistry(
   });
 
   write.push(writeInfo());
-  for (const child of out.subRegistries) {
+  for (const child of out.subRegistries ?? []) {
     write.push(
       writeRegistry(child, {
         dir: path.join(dir, child.name),

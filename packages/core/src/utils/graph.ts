@@ -77,6 +77,10 @@ export class BidirectedGraph<K, V> {
     yield* this.nodes.keys();
   }
 
+  entries() {
+    return this.nodes.entries();
+  }
+
   get vertexCount(): number {
     return this.nodes.size;
   }

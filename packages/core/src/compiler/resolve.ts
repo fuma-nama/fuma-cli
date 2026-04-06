@@ -1,9 +1,11 @@
 import path from "node:path";
 import fs from "node:fs/promises";
-import type { CompileContext, Reference } from "./compile";
+import type { CompileContext, Reference, Registry } from "./compile";
 import { parse, type ParseResult } from "oxc-parser";
 import { visitSpecifiers } from "@/utils/ast";
 import { MACRO_PATH } from "@/constants";
+import { ResolverFactory } from "oxc-resolver";
+import type { PackageJson } from "@/types";
 
 export type RawReference =
   | {
@@ -30,7 +32,7 @@ export type ScanResult =
     }
   | {
       type: "ts";
-      imports?: Map<string, RawReference>;
+      imports?: Map<string, Reference>;
       content: string;
       ast: ParseResult;
     }
@@ -38,12 +40,50 @@ export type ScanResult =
       type: "resolving";
     };
 
+// absolute path -> info
+export type PackageJsonMap = Map<string, { data: PackageJson | null; registry: Registry }>;
+
 export async function resolveFiles(prescannedFilePaths: string[], ctx: CompileContext) {
-  await Promise.all(prescannedFilePaths.map((filePath) => resolveFile(filePath, ctx)));
+  // resolve anything possible
+  const oxc = new ResolverFactory({
+    extensions: [".js", ".jsx", ".ts", ".tsx", ".node"],
+    conditionNames: ["node", "import", "require", "default", "types"],
+  });
+
+  // absolute path -> info
+  const packageJsons: PackageJsonMap = new Map();
+
+  async function findRegistryPackageJsons(registry: Registry) {
+    const packageJson = path.join(registry.dir, registry.packageJson);
+    if (packageJsons.has(packageJson)) return;
+
+    packageJsons.set(packageJson, {
+      data: await fs
+        .readFile(packageJson)
+        .then((res) => JSON.parse(res.toString()) as PackageJson)
+        .catch(() => null),
+      registry,
+    });
+
+    if (registry.subRegistries)
+      await Promise.all(registry.subRegistries.map(findRegistryPackageJsons));
+  }
+
+  await findRegistryPackageJsons(ctx.root);
+  await Promise.all(
+    prescannedFilePaths.map((filePath) => resolveFile(filePath, oxc, packageJsons, ctx)),
+  );
+
+  return { packageJsons };
 }
 
-async function resolveFile(filePath: string, ctx: CompileContext) {
-  const { fileGraph, registry, resolver, onUnknownFile, isExternal } = ctx;
+async function resolveFile(
+  filePath: string,
+  oxc: ResolverFactory,
+  packageJsons: PackageJsonMap,
+  ctx: CompileContext,
+) {
+  const { fileGraph, onUnknownFile, isExternal, onParseReference } = ctx;
   let node = fileGraph.getVertex(filePath);
 
   if (!node) throw new Error(`vertex "${filePath}" should exist before resolving`);
@@ -52,21 +92,6 @@ async function resolveFile(filePath: string, ctx: CompileContext) {
   node.data.scanned = {
     type: "resolving",
   };
-
-  if (!node.data.resolved) {
-    const out = await onUnknownFile?.(filePath);
-
-    if (out === false) {
-      fileGraph.removeVertex(filePath);
-      return;
-    } else if (!out) {
-      throw new Error(
-        `Unknown file: "${filePath}", no info on how the file should be handled. Please define onUnknownFile() on registry-level, or include it in your component.`,
-      );
-    }
-
-    node.data.resolved = out;
-  }
 
   const astTypes: Record<string, "js" | "ts" | undefined> = {
     ".ts": "ts",
@@ -93,25 +118,21 @@ async function resolveFile(filePath: string, ctx: CompileContext) {
     throw new Error(`failed to parse file ${filePath}: \n${ast.errors.join("\n")}`);
   }
 
-  const scanned: ScanResult = (node.data.scanned = {
-    type: "ts",
-    ast,
-    content,
-  });
-
+  let imports: Map<string, Reference> | undefined;
   const next: string[] = [];
+
   visitSpecifiers(ast.program, (source) => {
     const specifier = source.value;
     let resolved: Reference | undefined;
-    const resolvedSpecifier = resolver.oxc.resolveFileSync(filePath, specifier);
+    const resolvedSpecifier = oxc.resolveFileSync(filePath, specifier);
 
-    if (resolvedSpecifier.error || !resolvedSpecifier.path) {
+    if (resolvedSpecifier.error || !resolvedSpecifier.path || !resolvedSpecifier.packageJsonPath) {
       resolved = {
         type: "unknown",
         specifier,
       };
-    } else if (path.relative(registry.dir, resolvedSpecifier.path).startsWith(`..${path.sep}`)) {
-      // outside of registry dir
+    } else if (!packageJsons.has(resolvedSpecifier.packageJsonPath)) {
+      // outside of registry dir = dep
       resolved = {
         type: "dependency",
         dep: getDepFromSpecifier(specifier)!,
@@ -126,16 +147,42 @@ async function resolveFile(filePath: string, ctx: CompileContext) {
 
     if ((isExternal && isExternal(resolved)) || isExternalDefault(resolved)) return;
 
-    scanned.imports ??= new Map();
-    scanned.imports.set(specifier, resolved);
+    if (onParseReference) {
+      resolved = onParseReference(resolved, { filePath });
+    }
+
     if (resolved.type === "file") {
-      fileGraph.addVertex(resolved.file, {});
+      if (!fileGraph.hasVertex(resolved.file)) {
+        const out = onUnknownFile?.(filePath);
+
+        if (out) {
+          fileGraph.addVertex(resolved.file, { resolved: out });
+        } else if (out === false) {
+          // skip this import
+          return;
+        } else {
+          throw new Error(
+            `Unknown file: "${filePath}", no info on how the file should be handled. Please define onUnknownFile() on registry-level, or include it in your component.`,
+          );
+        }
+      }
+
       fileGraph.addEdge(filePath, resolved.file);
       next.push(resolved.file);
     }
+
+    imports ??= new Map();
+    imports.set(specifier, resolved);
   });
 
-  await Promise.all(next.map((ref) => resolveFile(ref, ctx)));
+  node.data.scanned = {
+    type: "ts",
+    ast,
+    content,
+    imports,
+  };
+
+  await Promise.all(next.map((ref) => resolveFile(ref, oxc, packageJsons, ctx)));
 }
 
 function isExternalDefault(ref: RawReference) {
