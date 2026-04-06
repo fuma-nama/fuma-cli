@@ -3,6 +3,7 @@ import { z } from "zod";
 export type CompiledFile = z.input<typeof fileSchema>;
 export type CompiledComponent = z.input<typeof componentSchema>;
 export type CompiledRegistryInfo = z.input<typeof registryInfoSchema>;
+export type CompiledIndex = z.input<typeof indexSchema>;
 export type DownloadedRegistryInfo = z.output<typeof registryInfoSchema>;
 export type File = z.output<typeof fileSchema>;
 export type Component = z.output<typeof componentSchema>;

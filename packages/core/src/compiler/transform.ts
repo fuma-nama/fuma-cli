@@ -1,9 +1,14 @@
 import { encodeImport, getComponentFileId } from "@/registry/protocols/import";
-import { CompiledComponent, CompiledFile, subComponentReference } from "@/registry/schema";
+import {
+  type CompiledComponent,
+  type CompiledFile,
+  type CompiledIndex,
+  subComponentReference,
+} from "@/registry/schema";
 import { transformSpecifiers } from "@/utils/ast";
 import MagicString from "magic-string";
 import z from "zod";
-import type { Component, Reference, TransformContext } from "./compile";
+import type { Component, Reference, Registry, TransformContext } from "./compile";
 import { Chunk, ChunkType, fileGroupToComponent, getFileGroupComponentName } from "./chunks";
 import { type DepInfo, resolveDepInfo } from "./deps";
 
@@ -19,29 +24,34 @@ export function transformChunks(ctx: TransformContext) {
   const { chunkGraph, registryMap, root } = ctx;
 
   for (const chunk of chunkGraph.vertices()) {
-    if (chunk.type === ChunkType.Group) {
-      const { output } = registryMap.get(root.name)!;
-      output.components.push(transformComponent(chunk, fileGroupToComponent(chunk), ctx));
+    const registry = chunk.type === ChunkType.Group ? root : chunk.registry;
+    const { output } = registryMap.get(registry.name)!;
+
+    const [comp, index, unlisted] = transformComponent(registry, chunk, ctx);
+    if (unlisted) {
+      output.info.unlistedIndexes.push(index);
     } else {
-      const { output } = registryMap.get(chunk.registry.name)!;
-      output.components.push(transformComponent(chunk, chunk.component, ctx));
+      output.info.indexes.push(index);
     }
+
+    output.components.push(comp);
   }
 }
 
 function transformComponent(
+  registry: Registry,
   chunk: Chunk,
-  component: Component,
   ctx: TransformContext,
-): CompiledComponent {
+): [CompiledComponent, CompiledIndex, unlisted: boolean] {
   const { fileGraph } = ctx;
-  const registry = chunk.type === ChunkType.Component ? chunk.registry : null;
+  const component =
+    chunk.type === ChunkType.Component ? chunk.component : fileGroupToComponent(chunk);
   const compCtx: CompileComponentContext = {
     ...ctx,
     chunk,
     component,
-    dependencies: { ...registry?.dependencies, ...component.dependencies },
-    devDependencies: { ...registry?.devDependencies, ...component.devDependencies },
+    dependencies: { ...registry.dependencies, ...component.dependencies },
+    devDependencies: { ...registry.devDependencies, ...component.devDependencies },
     subComponents: new Map(),
   };
   const files: CompiledFile[] = [];
@@ -55,15 +65,23 @@ function transformComponent(
     });
   }
 
-  return {
-    name: component.name,
-    title: component.title,
-    description: component.description,
-    files,
-    subComponents: Array.from(compCtx.subComponents.values()),
-    dependencies: compCtx.dependencies,
-    devDependencies: compCtx.devDependencies,
-  };
+  return [
+    {
+      name: component.name,
+      title: component.title,
+      description: component.description,
+      files,
+      subComponents: Array.from(compCtx.subComponents.values()),
+      dependencies: compCtx.dependencies,
+      devDependencies: compCtx.devDependencies,
+    },
+    {
+      name: component.name,
+      description: component.description,
+      title: component.title,
+    },
+    component.unlisted ?? false,
+  ];
 }
 
 function hashSubComponentReference(ref: z.input<typeof subComponentReference>): string {

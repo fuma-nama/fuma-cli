@@ -221,12 +221,13 @@ export class ComponentInstaller {
 
       const decoded = decodeImport(specifier);
       if (decoded.type === "local") {
-        if (!importLookup.has(decoded.fileId)) {
+        const resolvedFile = importLookup.get(decoded.fileId);
+        if (!resolvedFile) {
           this.io.onWarn(`cannot find the referenced file of ${specifier}`);
           return specifier;
         }
 
-        return toImportSpecifier(filePath, this.resolveOutputPath(importLookup.get(specifier)!));
+        return toImportSpecifier(filePath, this.resolveOutputPath(resolvedFile));
       }
 
       return decoded.specifier;

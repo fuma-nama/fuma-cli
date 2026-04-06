@@ -37,7 +37,7 @@ export class DownloadManager {
           await plugin.beforeDownload?.(ctx);
         }
 
-        const comp = await connector.fetchComponent(name);
+        const comp = await connector.fetchComponent(name, subRegistry);
         // place it before downloading child components to avoid recursive downloads
         const result = presolve({
           ...comp,
