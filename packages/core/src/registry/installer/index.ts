@@ -1,6 +1,6 @@
 import path from "node:path";
 import fs from "node:fs/promises";
-import { typescriptExtensions } from "@/constants";
+import { Framework, typescriptExtensions } from "@/constants";
 import { toImportSpecifier, transformSpecifiers } from "@/utils/ast";
 import type { File } from "@/registry/schema";
 import type { RegistryConnector } from "@/registry/connector";
@@ -16,7 +16,8 @@ import {
   resolveRouteFilePath,
 } from "@/utils/framework";
 import { DownloadedComponent, DownloadManager } from "./download-manager";
-import { defaultIO, IOInterface } from "./io";
+import { defaultIO, type IOInterface } from "./io";
+import { existsSync } from "node:fs";
 
 export interface TransformContext extends InstallContext {
   file: File;
@@ -70,15 +71,22 @@ export interface ComponentInstallerOptions {
   plugins?: InstallerPlugin[];
   cwd?: string;
   io?: IOInterface;
-
-  framework: "react-router" | "next" | "waku" | "tanstack-start";
-  outDir: Record<"base" | "components" | "lib" | "css" | "ui" | "layout", string>;
+  /**
+   * The preferred Web framework, installer will generate code based on the framework.
+   *
+   * If the target framework isn't supported, you can still pass `none` for framework-agnostic code.
+   */
+  framework?: Framework;
+  outDir?: Partial<OutputDestinations>;
 }
+
+type OutputDestinations = Record<"base" | "components" | "lib" | "css" | "ui" | "layout", string>;
 
 export class ComponentInstaller {
   private readonly cwd: string;
   private readonly downloader: DownloadManager;
   private readonly io: IOInterface;
+  private destinations: OutputDestinations | undefined;
 
   constructor(
     private readonly connector: RegistryConnector,
@@ -234,7 +242,7 @@ export class ComponentInstaller {
     });
 
     if (file.type === "route-handler") {
-      transformRouteHandler(file.route, filePath, config.framework, parsed.program, s);
+      transformRouteHandler(file.route, filePath, config.framework ?? "none", parsed.program, s);
 
       if (config.framework === "react-router") {
         const routesFile = path.join(this.cwd, "app/routes.ts");
@@ -254,18 +262,34 @@ export class ComponentInstaller {
     return s.toString();
   }
 
+  private getOutputDestinations(): OutputDestinations {
+    if (this.destinations) return this.destinations;
+    const v = this.config.outDir;
+
+    return (this.destinations = {
+      base: v?.base ?? (existsSync(path.join(this.cwd, "./src")) ? "src" : ""),
+      components: v?.components ?? "components",
+      css: v?.css ?? "css",
+      layout: v?.layout ?? "components/layouts",
+      lib: v?.lib ?? "lib",
+      ui: v?.ui ?? "components/ui",
+    });
+  }
+
   private resolveOutputPath(file: File): string {
     const config = this.config;
+    const destinations = this.getOutputDestinations();
+
     if (file.type === "route-handler") {
-      const rel = resolveRouteFilePath(file.route, config.framework, "ts");
-      return path.resolve(this.cwd, config.outDir.base, rel);
+      const rel = resolveRouteFilePath(file.route, config.framework ?? "none", "ts");
+      return path.resolve(this.cwd, destinations.base, rel);
     }
 
-    const dir = config.outDir[file.type];
+    const dir = destinations[file.type];
     if (file.target) {
-      return path.resolve(this.cwd, config.outDir.base, file.target.replace("<dir>", dir));
+      return path.resolve(this.cwd, destinations.base, file.target.replace("<dir>", dir));
     }
 
-    return path.resolve(this.cwd, config.outDir.base, dir, path.basename(file.path));
+    return path.resolve(this.cwd, destinations.base, dir, path.basename(file.path));
   }
 }
