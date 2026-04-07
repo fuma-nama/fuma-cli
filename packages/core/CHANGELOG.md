@@ -1,5 +1,11 @@
 # fuma-cli
 
+## 0.0.3
+
+### Patch Changes
+
+- 6590069: simplify installer usage
+
 ## 0.0.2
 
 ### Patch Changes
