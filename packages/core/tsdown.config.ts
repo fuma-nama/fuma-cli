@@ -5,7 +5,7 @@ export default defineConfig({
     "./src/{index,config}.ts",
     "./src/registry/{connector,schema}.ts",
     "./src/registry/installer/index.ts",
-    "./src/registry/macros/route-handler.ts",
+    "./src/macros/route-handler.ts",
     "./src/compiler/index.ts",
   ],
   format: "esm",

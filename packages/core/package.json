@@ -13,6 +13,7 @@
   "type": "module",
   "exports": {
     "./compiler": "./dist/compiler/index.js",
+    "./macros/route-handler": "./dist/macros/route-handler.js",
     "./registry/connector": "./dist/registry/connector.js",
     "./registry/installer": "./dist/registry/installer/index.js",
     "./registry/schema": "./dist/registry/schema.js",
@@ -29,8 +30,6 @@
     "types:check": "tsc --noEmit"
   },
   "dependencies": {
-    "@clack/prompts": "^1.1.0",
-    "commander": "^14.0.3",
     "magic-string": "^0.30.21",
     "oxc-parser": "^0.124.0",
     "oxc-resolver": "^11.19.1",
