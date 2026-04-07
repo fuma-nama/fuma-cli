@@ -1,0 +1,179 @@
+---
+title: Quick Start
+description: Getting started with Fuma CLI.
+---
+
+## Getting Started
+
+### Installation [step]
+
+You can install the package to get started:
+
+```npm
+npm i fuma-cli
+```
+
+### Define Registry [step]
+
+Specify the base directory for your registry.
+
+```ts title="my-repo/registry.ts"
+import type { Registry } from "fuma-cli/compiler";
+
+// my-repo/src
+const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "./src");
+
+export const registry: Registry = {
+  name: "acme-ui",
+  dir,
+  tsconfigPath: "../tsconfig.json",
+  packageJson: "../package.json",
+  components: [
+    {
+      name: "button",
+      files: [
+        {
+          // `type` specifies how the file should be installed
+          type: "ui",
+          path: "src/button.tsx",
+
+          // optional: change the installed path, <dir> refers to the default destination
+          target: "<dir>/primitives/button.tsx",
+        },
+      ],
+    },
+  ],
+};
+```
+
+Now compile & write the output via a script:
+
+```ts title="my-repo/scripts/compile.ts"
+import { compile, writeRegistry } from "fuma-cli/compiler";
+import { registry } from "../registry";
+
+const out = await compile({ root: registry });
+
+await writeRegistry(out, {
+  dir: "./public",
+
+  // optional: clean previous outputs
+  cleanDir: true,
+});
+```
+
+```bash tab="Node (22.18.0 or above)"
+node ./scripts/compile.ts
+```
+
+```bash tab="Bun"
+bun ./scripts/compile.ts
+```
+
+You need to serve the output files in `public` folder, here we assume all files under `public` are already served via `https://acme-ui.com`.
+
+### Implement Installer [step]
+
+Initialize your own CLI package and install dependencies:
+
+```npm
+npm i fuma-cli @clack/prompts
+```
+
+Fuma CLI installer is headless, we will use `@clack/prompts` for creating TUI.
+
+```ts title="my-cli/src/installer.ts"
+import { ComponentInstaller } from "fuma-cli/registry/installer";
+import { HttpRegistryConnector } from "fuma-cli/registry/connector";
+import type { LoadedConfig } from "@/config";
+import { confirm, isCancel } from "@clack/prompts";
+import picocolors from "picocolors";
+
+export class MyComponentInstaller extends ComponentInstaller {
+  constructor() {
+    const connector = new HttpRegistryConnector("https://acme-ui.com");
+
+    super(connector, {
+      // the Web framework consumer prefers
+      framework: "none",
+
+      // where to write components, e.g.
+      outDir: {
+        base: "src",
+      },
+      io: {
+        onWarn(message) {
+          console.warn(message);
+        },
+        async confirmFileOverride(options) {
+          const value = await confirm({
+            message: `Do you want to override ${options.path}?`,
+            initialValue: false,
+          });
+
+          if (isCancel(value)) {
+            outro("Installation terminated");
+            process.exit(0);
+          }
+
+          return value;
+        },
+        onFileDownloaded(options) {
+          console.log(`downloaded ${options.path}`);
+        },
+      },
+    });
+  }
+}
+```
+
+### Create Command [step]
+
+Create a command that installs your `button` component.
+
+```ts title="my-cli/src/commands/install.ts"
+import { isCancel, confirm, box } from "@clack/prompts";
+import { MyComponentInstaller } from "../installer";
+
+export async function install(targets: string[]) {
+  const installer = new MyComponentInstaller();
+
+  for (const target of targets) {
+    const deps = await installer.install(target).then((res) => res.deps());
+
+    if (deps.hasRequired()) {
+      box([...deps.dependencies, ...deps.devDependencies].join("\n"), "New Dependencies");
+      const value = await confirm({
+        message: `Do you want to install dependencies?`,
+      });
+
+      if (isCancel(value)) {
+        outro("Installation terminated");
+        process.exit(0);
+      }
+
+      if (value) {
+        await deps.installRequired();
+      } else {
+        await deps.writeRequired();
+      }
+    }
+  }
+}
+```
+
+The consumer can now execute the command to install `button`, e.g.
+
+```ts title="scripts/test-install.ts"
+import { install } from "./commands/install";
+
+await install(["button"]);
+```
+
+```bash
+node scripts/test-install.ts
+```
+
+## Common pitfalls
+
+- The **same absolute file path** cannot belong to two different top-level components.

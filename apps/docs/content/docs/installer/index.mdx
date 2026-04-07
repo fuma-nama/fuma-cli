@@ -1,0 +1,42 @@
+---
+title: Installer
+description: Install compiled registry components into a consumer codebase.
+---
+
+## Connectors
+
+- **HTTP**: `HttpRegistryConnector(baseUrl)`, fetch resource via HTTP.
+- **File System**: `LocalRegistryConnector(dir)`, reads resource from file system.
+
+## Installer
+
+It accepts a config object, it is recommended to implement your own config system, then pass the config to installer.
+
+```ts
+import { ComponentInstaller } from "fuma-cli/registry/installer";
+import { HttpRegistryConnector } from "fuma-cli/registry/connector";
+
+const installer = new ComponentInstaller(
+  new HttpRegistryConnector("https://registry.example.com"),
+  {
+    framework: "next",
+    outDir: {
+      base: "",
+    },
+  },
+);
+
+const { deps } = await installer.install("button");
+
+// or with sub registry:
+const { deps } = await installer.install("button", "my-sub-registry");
+
+const dm = await deps();
+if (dm.hasRequired()) await dm.installRequired(); // runs detected package manager
+```
+
+`install()` returns an object for futher actions, such as install require dependencies.
+
+### `io`
+
+Customise the IO interface, useful for integrating with your own TUI.
