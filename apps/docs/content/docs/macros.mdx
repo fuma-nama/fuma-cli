@@ -1,0 +1,71 @@
+---
+title: Macros
+description: Reduce duplication in your registry files.
+---
+
+Macros are small compile-time modules that are transformed out when being installed.
+
+This is useful for writing a component file once, and adopt to consumer's framework once installed.
+
+## Default Macros
+
+Fuma CLI comes with a few pre-built macros.
+
+### `$routeHandler()`
+
+Framework-agnostic HTTP request handler.
+
+```ts title="src/post-route.ts"
+import { $routeHandler } from "fuma-cli/macros/route-handler";
+
+export const handler = $routeHandler(
+  { methods: ["GET", "POST"], params: ["id"] },
+  async (req, params) => {
+    return Response.json({ id: params.id });
+  },
+);
+```
+
+The first paremeter must be analyzable as **literals** in the AST.
+
+| Option         | Description                                                      |
+| -------------- | ---------------------------------------------------------------- |
+| **`methods`**  | Non-empty array of HTTP method strings (e.g. `"GET"`, `"POST"`). |
+| **`params`**   | A list of path parameters.                                       |
+| **`catchAll`** | Name for the catch-all / splat parameter.                        |
+
+<Callout type="warn" title="Reserved Variables">
+
+Avoid naming the parameters `args` or `ctx`.
+
+</Callout>
+
+Add the route file to registry definition:
+
+```ts
+const registry = {
+  components: [
+    {
+      name: "my-component",
+      files: [
+        // [!code ++:5]
+        {
+          type: "route-handler",
+          route: "api/posts/[id]", // see below for correct format
+          path: "post-route.ts",
+        },
+      ],
+    },
+  ],
+};
+```
+
+The `route` field defines the actual route to handle requests, its format is same as Next.js App Router (without the extra `route.ts`).
+
+| Route Format               | Example                          | Description                                                              |
+| -------------------------- | -------------------------------- | ------------------------------------------------------------------------ |
+| Static path                | `api/posts`                      | Matches requests to `/api/posts`                                         |
+| Dynamic parameter          | `api/posts/[id]`                 | Matches requests to `/api/posts/123`, exposes `params.id`                |
+| Multiple parameters        | `api/posts/[postId]/[commentId]` | Matches `/api/posts/1/2`, exposes `params.postId` and `params.commentId` |
+| Catch-all (splat) segment  | `api/posts/[...slug]`            | Matches `/api/posts/a/b/c`, exposes `params.slug` as array               |
+| Optional catch-all segment | `api/posts/[[...slug]]`          | Matches `/api/posts` or `/api/posts/a/b`, exposes `params.slug`          |
