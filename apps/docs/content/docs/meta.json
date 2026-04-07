@@ -1,4 +1,12 @@
 {
   "title": "Fuma CLI",
-  "pages": ["---Guide---", "index", "quick-start", "---Reference---", "compiler", "installer"]
+  "pages": [
+    "---Guide---",
+    "index",
+    "quick-start",
+    "macros",
+    "---Reference---",
+    "compiler",
+    "installer"
+  ]
 }

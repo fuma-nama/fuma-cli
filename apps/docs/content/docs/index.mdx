@@ -12,8 +12,9 @@ Fuma CLI is a toolkit for building **your own [shadcn/ui](https://ui.shadcn.com)
 
 Fuma CLI addresses a few problems when maintaing larger registries:
 
-- **Automatic sub-components and file references**: The compiler walks TypeScript/JavaScript imports, groups shared files. Without maintaining every edge manually, your component will always be installed correctly and predictably.
+- **Automatic sub-components and file references**: The compiler checks all TypeScript imports and handle component dependencies. Without maintaining every edge manually, your component will always be installed correctly and predictably.
 - **Monorepo-friendly**: Split registries across workspaces; Native support for **sub-registries** and cross-registry references.
+- **Avoid Duplication**: With macros, the same file can be installed for multiple frameworks.
 
 Same as **Shadcn CLI**, it ships code that adopts to consumer's codebase, allowing full control over the installed code.
 What is different:
