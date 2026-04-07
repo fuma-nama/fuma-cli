@@ -9,14 +9,16 @@
     "format": "oxfmt",
     "types:check": "turbo run types:check",
     "version": "changeset version",
-    "release": "changeset publish"
+    "release": "changeset publish",
+    "test": "vitest"
   },
   "devDependencies": {
     "@changesets/cli": "^2.30.0",
-    "oxfmt": "^0.42.0",
-    "oxlint": "^1.57.0",
-    "turbo": "^2.8.21",
-    "typescript": "6.0.2"
+    "oxfmt": "^0.44.0",
+    "oxlint": "^1.59.0",
+    "turbo": "^2.9.4",
+    "typescript": "6.0.2",
+    "vitest": "^4.1.2"
   },
   "engines": {
     "node": ">=22"

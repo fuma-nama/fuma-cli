@@ -30,5 +30,5 @@
     "builtin": true
   },
   "globals": {},
-  "ignorePatterns": []
+  "ignorePatterns": ["**/test/fixtures/**"]
 }
