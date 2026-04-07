@@ -215,23 +215,14 @@ function parseHandlerFromAst(s: MagicString, expr: Argument): HandlerInfo {
 }
 
 function generateRequestDeclaration(framework: Framework, binding: string): string {
-  if (framework === "tanstack-start") {
-    if (binding === "ctx") {
-      throw new Error(
-        "route-handler.build: name the request parameter something other than `ctx` for TanStack file routes",
-      );
-    }
-    return `const ${binding} = ctx.request;\n`;
+  switch (framework) {
+    case "tanstack-start":
+      return `const ${binding} = ctx.request;\n`;
+    case "react-router":
+      return `const ${binding} = args.request;\n`;
+    default:
+      return "";
   }
-  if (framework === "react-router") {
-    if (binding === "args") {
-      throw new Error(
-        "route-handler.build: name the request parameter something other than `args` for React Router resource routes",
-      );
-    }
-    return `const ${binding} = args.request;\n`;
-  }
-  return "";
 }
 
 function generateParamsDeclaration(
@@ -255,6 +246,8 @@ function generateParamsDeclaration(
       paramsIdentifier = "ctx.params";
       paramsCatchAllIdentifier = "ctx.params._splat";
       break;
+    case "none":
+      return "";
   }
 
   const parts: string[] = [];
@@ -267,11 +260,6 @@ function generateParamsDeclaration(
   }
 
   return `const ${paramsBinding} = {\n${indent(parts.join(",\n"))}\n};\n`;
-}
-
-function resolveParamsBindingName(info: ParsedRouteInfo, userSecond: string | null): string | null {
-  if (!needsRouteParams(info)) return null;
-  return userSecond ?? "params";
 }
 
 function registryRouteToTanStackCreateFileRoutePath(route: string): string {
@@ -301,25 +289,18 @@ function registryRouteToUrlPath(route: string): string {
   return t ? `/${t}` : "/";
 }
 
-/**
- * React Router typegen: `./+types/<segments>` relative to the route file (see `+types` next to `routes/`).
- */
-function computeReactRouterTypesSpecifier(routeFilePath: string): string {
-  return `./+types/${path.basename(routeFilePath, path.extname(routeFilePath))}`;
-}
-
 function generateImports(framework: Framework, routeFilePath: string): string {
-  const lines: string[] = [];
-  if (framework === "tanstack-start") {
-    lines.push(`import { createFileRoute } from '@tanstack/react-router';`);
+  switch (framework) {
+    case "tanstack-start":
+      return `import { createFileRoute } from '@tanstack/react-router';\n`;
+    case "waku":
+      return `import type { ApiContext } from 'waku/router';\n`;
+    case "react-router":
+      // React Router typegen: `./+types/<segments>` relative to the route file (see `+types` next to `routes/`).
+      return `import type { Route } from './+types/${path.basename(routeFilePath, path.extname(routeFilePath))}';\n`;
   }
-  if (framework === "waku") {
-    lines.push(`import type { ApiContext } from 'waku/router';`);
-  }
-  if (framework === "react-router") {
-    lines.push(`import type { Route } from '${computeReactRouterTypesSpecifier(routeFilePath)}';`);
-  }
-  return lines.length ? `${lines.join("\n")}\n` : "";
+
+  return "";
 }
 
 function generateDeclaration(
@@ -328,7 +309,7 @@ function generateDeclaration(
   parsedInfo: ParsedRouteInfo,
   handler: HandlerInfo,
 ): string {
-  const paramsBinding = resolveParamsBindingName(parsedInfo, handler.paramsName);
+  const paramsBinding = needsRouteParams(parsedInfo) ? (handler.paramsName ?? "params") : null;
   let inner = dedent(handler.bodyText);
   if (paramsBinding) {
     inner = generateParamsDeclaration(framework, parsedInfo, paramsBinding) + inner;
@@ -342,6 +323,7 @@ function generateDeclaration(
     case "next": {
       /** `RouteContext` is provided by Next.js typed routes / `next typegen` (global). */
       const ctxType = `RouteContext<${urlPathLiteral}>`;
+
       return parsedInfo.methods
         .map(
           (m) =>
@@ -359,6 +341,12 @@ function generateDeclaration(
         .join("\n\n");
     }
     case "tanstack-start": {
+      if (handler.requestName === "ctx") {
+        throw new Error(
+          "route-handler.build: name the request parameter something other than `ctx` for TanStack file routes",
+        );
+      }
+
       const fileRoutePath = JSON.stringify(registryRouteToTanStackCreateFileRoutePath(route));
       const entries = parsedInfo.methods
         .map((m) => `      ${m}: async (ctx) => {\n${indent(inner, 4)}\n      },`)
@@ -366,6 +354,12 @@ function generateDeclaration(
       return `export const Route = createFileRoute(${fileRoutePath})({\n  server: {\n    handlers: {\n${entries}\n    },\n  },\n});\n`;
     }
     case "react-router": {
+      if (handler.requestName === "args") {
+        throw new Error(
+          "route-handler.build: name the request parameter something other than `args` for React Router resource routes",
+        );
+      }
+
       const includeLoader = parsedInfo.methods.some((x) => reactRouterLoaderMethods.has(x));
       const includeAction = parsedInfo.methods.some((x) => reactRouterActionMethods.has(x));
       if (!includeLoader && !includeAction) {
@@ -381,6 +375,35 @@ function generateDeclaration(
         parts.push(`export async function action(args: Route.ActionArgs) {\n${indent(inner)}\n}`);
       }
       return `${parts.join("\n\n")}\n`;
+    }
+    case "none": {
+      if (paramsBinding) {
+        let pType = `{`;
+
+        for (const param of parsedInfo.params) {
+          pType += ` ${encodeKey(param)}: string;`;
+        }
+
+        if (parsedInfo.catchAll) {
+          pType += ` ${encodeKey(parsedInfo.catchAll)}?: string[];`;
+        }
+
+        pType += " }";
+
+        return parsedInfo.methods
+          .map(
+            (m) =>
+              `export async function ${m}(${handler.requestName}: Request, ${paramsBinding}: ${pType}) {\n${indent(inner)}\n}`,
+          )
+          .join("\n\n");
+      }
+
+      return parsedInfo.methods
+        .map(
+          (m) =>
+            `export async function ${m}(${handler.requestName}: Request) {\n${indent(inner)}\n}`,
+        )
+        .join("\n\n");
     }
   }
 }

@@ -8,7 +8,7 @@ import {
 import { transformSpecifiers } from "@/utils/ast";
 import MagicString from "magic-string";
 import z from "zod";
-import type { Component, Reference, Registry, TransformContext } from "./compile";
+import type { Component, FileGraphInfo, Reference, Registry, TransformContext } from "./compile";
 import { Chunk, ChunkType, fileGroupToComponent, getFileGroupComponentName } from "./chunks";
 import { type DepInfo, resolveDepInfo } from "./deps";
 
@@ -20,14 +20,28 @@ export interface CompileComponentContext extends TransformContext {
   subComponents: Map<string, z.input<typeof subComponentReference>>;
 }
 
-export function transformChunks(ctx: TransformContext) {
-  const { chunkGraph, registryMap, root } = ctx;
+export function writechunks(ctx: TransformContext) {
+  const { fileGraph, registryMap, root } = ctx;
+  const chunkFiles = new Map<Chunk, string[]>();
 
-  for (const chunk of chunkGraph.vertices()) {
+  for (const [file, node] of fileGraph.entries()) {
+    const chunk = node.data.chunk;
+    if (!chunk) throw new Error(`file "${file}" has no aligned chunk`);
+
+    let list = chunkFiles.get(chunk);
+    if (!list) {
+      list = [];
+      chunkFiles.set(chunk, list);
+    }
+
+    list.push(file);
+  }
+
+  for (const [chunk, files] of chunkFiles.entries()) {
     const registry = chunk.type === ChunkType.Group ? root : chunk.registry;
     const { output } = registryMap.get(registry.name)!;
 
-    const [comp, index, unlisted] = transformComponent(registry, chunk, ctx);
+    const [comp, index, unlisted] = transformComponent(registry, chunk, files, ctx);
     if (unlisted) {
       output.info.unlistedIndexes.push(index);
     } else {
@@ -41,6 +55,7 @@ export function transformChunks(ctx: TransformContext) {
 function transformComponent(
   registry: Registry,
   chunk: Chunk,
+  filePaths: string[],
   ctx: TransformContext,
 ): [CompiledComponent, CompiledIndex, unlisted: boolean] {
   const { fileGraph } = ctx;
@@ -54,16 +69,14 @@ function transformComponent(
     devDependencies: { ...registry.devDependencies, ...component.devDependencies },
     subComponents: new Map(),
   };
-  const files: CompiledFile[] = [];
-  for (const file of fileGraph.vertices()) {
-    const data = fileGraph.getVertex(file)!.data;
-    if (data.chunk !== chunk) continue;
+  const files: CompiledFile[] = filePaths.map((file) => {
+    const data = fileGraph.getVertex(file)!;
 
-    files.push({
-      ...data.resolved!,
-      content: transformFile(file, compCtx),
-    });
-  }
+    return {
+      ...data.resolved,
+      content: transformFile(data, compCtx),
+    };
+  });
 
   return [
     {
@@ -101,7 +114,7 @@ function writeReference(reference: Reference, ctx: CompileComponentContext) {
   }
 
   if (reference.type === "file") {
-    const resolved = fileGraph.getVertex(reference.file)?.data.resolved;
+    const resolved = fileGraph.getVertex(reference.file)?.resolved;
 
     if (resolved) {
       return encodeImport({ type: "local", fileId: getComponentFileId(resolved) });
@@ -167,10 +180,9 @@ function writeReference(reference: Reference, ctx: CompileComponentContext) {
   return reference.specifier;
 }
 
-function transformFile(filePath: string, ctx: CompileComponentContext): string {
+function transformFile(data: FileGraphInfo, ctx: CompileComponentContext): string {
   const { fileGraph, root } = ctx;
-  const node = fileGraph.getVertex(filePath)!.data;
-  const scanned = node.scanned!;
+  const scanned = data.scanned!;
   if (scanned.type === "raw") return scanned.content;
   if (scanned.type === "resolving") throw new Error("impossible");
   const { content, imports, ast } = scanned;
@@ -184,7 +196,7 @@ function transformFile(filePath: string, ctx: CompileComponentContext): string {
       if (!meta) return;
 
       if (meta.type === "file") {
-        const data = fileGraph.getVertex(meta.file)?.data;
+        const data = fileGraph.getVertex(meta.file);
 
         if (data && data.chunk && data.resolved)
           meta = {

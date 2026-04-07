@@ -43,7 +43,8 @@ export type ScanResult =
 // absolute path -> info
 export type PackageJsonMap = Map<string, { data: PackageJson | null; registry: Registry }>;
 
-export async function resolveFiles(prescannedFilePaths: string[], ctx: CompileContext) {
+export async function resolveFiles(ctx: CompileContext) {
+  const { root, fileGraph } = ctx;
   // resolve anything possible
   const oxc = new ResolverFactory({
     extensions: [".js", ".jsx", ".ts", ".tsx", ".node"],
@@ -70,9 +71,10 @@ export async function resolveFiles(prescannedFilePaths: string[], ctx: CompileCo
       await Promise.all(registry.subRegistries.map(findRegistryPackageJsons));
   }
 
-  await findRegistryPackageJsons(ctx.root);
+  await findRegistryPackageJsons(root);
+
   await Promise.all(
-    prescannedFilePaths.map((filePath) => resolveFile(filePath, oxc, packageJsons, ctx)),
+    Array.from(fileGraph.vertices()).map((file) => resolveFile(file, oxc, packageJsons, ctx)),
   );
 
   return { packageJsons };
@@ -88,9 +90,9 @@ async function resolveFile(
   let node = fileGraph.getVertex(filePath);
 
   if (!node) throw new Error(`vertex "${filePath}" should exist before resolving`);
-  if (node.data.scanned) return;
+  if (node.scanned) return;
 
-  node.data.scanned = {
+  node.scanned = {
     type: "resolving",
   };
 
@@ -101,10 +103,10 @@ async function resolveFile(
     ".jsx": "js",
   };
   const astType = astTypes[path.extname(filePath)];
-  const content = (await fs.readFile(filePath)).toString();
+  const content = node.resolved.content ?? (await fs.readFile(filePath)).toString();
 
   if (!astType) {
-    node.data.scanned = {
+    node.scanned = {
       type: "raw",
       content,
     };
@@ -176,7 +178,7 @@ async function resolveFile(
     imports.set(specifier, resolved);
   });
 
-  node.data.scanned = {
+  node.scanned = {
     type: "ts",
     ast,
     content,

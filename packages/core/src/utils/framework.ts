@@ -26,6 +26,7 @@ export function resolveRouteFilePath(
   route = route.replace(/^\/+/, "").replace(/\/+$/, "");
 
   switch (framework) {
+    case "none":
     case "next": {
       return `app/${route}/route.${extension}`;
     }

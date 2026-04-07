@@ -5,7 +5,7 @@ import type { DistributiveOmit } from "@/types";
 import { BidirectedGraph } from "@/utils/graph";
 import { PackageJsonMap, RawReference, resolveFiles, ScanResult } from "./resolve";
 import { type Chunk, ChunkType, ComponentChunk, generateChunks } from "./chunks";
-import { transformChunks } from "./transform";
+import { writechunks } from "./transform";
 import type { DependenciesConfig } from "./deps";
 
 export interface FileGraphInfo {
@@ -23,6 +23,8 @@ export interface CompiledRegistry {
 
 export type ComponentFile = DistributiveOmit<CompiledFile, "content"> & {
   path: string;
+  /** replace the actual content in file system */
+  content?: string;
 };
 
 export interface Component extends DependenciesConfig {
@@ -95,7 +97,6 @@ export interface CompileContext extends CompileOptions {
 }
 
 export interface TransformContext extends CompileContext {
-  chunkGraph: BidirectedGraph<Chunk, undefined>;
   packageJsons: PackageJsonMap;
 }
 
@@ -108,8 +109,6 @@ export async function compile(options: CompileOptions): Promise<CompiledRegistry
     fileGraph: new BidirectedGraph(),
     registryMap,
   };
-
-  const filePaths: string[] = [];
 
   function initRegistry(registry: Registry) {
     const cached = registryMap.get(registry.name);
@@ -148,7 +147,6 @@ export async function compile(options: CompileOptions): Promise<CompiledRegistry
         }
 
         data.chunk = chunk;
-        filePaths.push(filePath);
       }
     }
 
@@ -156,12 +154,11 @@ export async function compile(options: CompileOptions): Promise<CompiledRegistry
   }
 
   initRegistry(root);
-  const { packageJsons } = await resolveFiles(filePaths, ctx);
-
-  transformChunks({
+  const { packageJsons } = await resolveFiles(ctx);
+  generateChunks(ctx);
+  writechunks({
     ...ctx,
     packageJsons,
-    chunkGraph: generateChunks(filePaths, ctx),
   });
 
   return registryMap.get(root.name)!.output;

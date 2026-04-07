@@ -1,4 +1,3 @@
-import { BidirectedGraph } from "@/utils/graph";
 import type { CompileContext, Component, Registry } from "./compile";
 
 export enum ChunkType {
@@ -19,47 +18,18 @@ export interface ComponentChunk {
   component: Component;
 }
 
-/**
- * @param prescannedFilePaths - list of file paths that already have a confirmed `chunk`.
- * @param ctx
- */
-export function generateChunks(prescannedFilePaths: string[], ctx: CompileContext) {
+export function generateChunks(ctx: CompileContext) {
   const { fileGraph } = ctx;
-  const chunkGraph = new BidirectedGraph<Chunk, undefined>();
-  const referrerComponents = new Map<GroupChunk, Set<ComponentChunk>>();
-
-  function getReferrerComponents(group: GroupChunk): Set<ComponentChunk> {
-    const cached = referrerComponents.get(group);
-    if (cached) return cached;
-
-    const out = new Set<ComponentChunk>();
-    referrerComponents.set(group, out);
-
-    for (const referrer of chunkGraph.getVertex(group)!.referrers) {
-      if (referrer.type === ChunkType.Group) {
-        for (const item of getReferrerComponents(referrer)) out.add(item);
-      } else {
-        out.add(referrer);
-      }
-    }
-
-    return out;
-  }
-
-  function equalReferrerComponents(chunk: GroupChunk, components: ComponentChunk[]) {
-    const v = getReferrerComponents(chunk);
-    return v.size === components.length && components.every((comp) => v.has(comp));
-  }
 
   function traverse(filePath: string, visited: Set<string> = new Set()) {
     if (visited.has(filePath)) return;
-    const { data, referees, referrers } = fileGraph.getVertex(filePath)!;
+    const { data, referees, referrers } = fileGraph.getNode(filePath)!;
 
     if (!data.chunk) {
       const referrerChunks = new Set<Chunk>();
 
       for (const referrer of referrers) {
-        const referrerChunk = ctx.fileGraph.getVertex(referrer)!.data.chunk;
+        const referrerChunk = fileGraph.getVertex(referrer)!.chunk;
         // wait until all referrers are resolved
         if (!referrerChunk) return;
 
@@ -79,30 +49,17 @@ export function generateChunks(prescannedFilePaths: string[], ctx: CompileContex
           else referrerComponents.push(chunk);
         }
 
-        const mergeableChunk =
-          referrerGroups.length === 1 &&
-          equalReferrerComponents(referrerGroups[0], referrerComponents)
-            ? referrerGroups[0]
-            : null;
+        const chunkId = generateGroupId(referrerComponents);
 
-        if (mergeableChunk) {
-          data.chunk = mergeableChunk;
+        if (referrerGroups.length === 1 && referrerGroups[0].id === chunkId) {
+          data.chunk = referrerGroups[0];
         } else {
-          const chunk: GroupChunk = {
+          data.chunk = {
             type: ChunkType.Group,
-            // TODO: generate proper id
-            id: `c${Date.now()}`,
+            id: chunkId,
           };
-          chunkGraph.addVertex(chunk, undefined);
-          data.chunk = chunk;
-
-          for (const referrerChunk of referrerChunks) {
-            chunkGraph.addEdge(referrerChunk, chunk);
-          }
         }
       }
-    } else {
-      chunkGraph.addVertex(data.chunk, undefined);
     }
 
     visited.add(filePath);
@@ -112,8 +69,26 @@ export function generateChunks(prescannedFilePaths: string[], ctx: CompileContex
     visited.delete(filePath);
   }
 
-  for (const filePath of prescannedFilePaths) traverse(filePath);
-  return chunkGraph;
+  const rootNodes: string[] = [];
+  for (const file of fileGraph.vertices()) {
+    if (fileGraph.getVertex(file)!.chunk) rootNodes.push(file);
+  }
+
+  for (const filePath of rootNodes) traverse(filePath);
+}
+
+/**
+ * all files in a file group must be referenced by exactly same set of components.
+ *
+ * hence, the unique ID can be generated purely based on input components.
+ */
+function generateGroupId(components: ComponentChunk[]) {
+  const segments = components.map((comp) => {
+    return `${comp.registry.name}:${comp.component.name}`;
+  });
+
+  segments.sort();
+  return segments.join("+");
 }
 
 export function getFileGroupComponentName(group: GroupChunk): string {

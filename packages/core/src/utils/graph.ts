@@ -10,7 +10,11 @@ export interface GraphNode<K, V> {
 export class BidirectedGraph<K, V> {
   private readonly nodes = new Map<K, GraphNode<K, V>>();
 
-  getVertex(k: K): GraphNode<K, V> | undefined {
+  getVertex(k: K): V | undefined {
+    return this.nodes.get(k)?.data;
+  }
+
+  getNode(k: K): GraphNode<K, V> | undefined {
     return this.nodes.get(k);
   }
 
