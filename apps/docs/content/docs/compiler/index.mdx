@@ -1,0 +1,22 @@
+---
+title: Compiler
+description: More details about compiler.
+---
+
+## Compile Options
+
+### `onUnknownFile`
+
+When component imported a file that is not defined in `files`, this function is called.
+
+- Return a **component file descriptor** to **include** that file.
+- Return **`false`** to treat the import as **external** (leave the import statement as-is).
+- Throw error if `undefined`.
+
+### `isExternal`
+
+Accept a `ref` object. Will keep the import statement as-is if `true` is returned, otherwise continue to resolve the imported file.
+
+### `onParseReference`
+
+Accept a `ref` object, allow you to rewrite the resolved file before further resolution.

@@ -1,0 +1,48 @@
+---
+title: Plugins
+description: Extend the installer with plugins.
+---
+
+## Introduction
+
+You can pass **`plugins`** to installer config.
+
+```ts
+import { ComponentInstaller, type InstallerPlugin } from "fuma-cli/registry/installer";
+
+const myPlugin: InstallerPlugin = {
+  // ...
+};
+
+new ComponentInstaller(connector, {
+  plugins: [myPlugin],
+});
+```
+
+### `beforeDownload`
+
+Runs before downloading component. Use for logging, auth headers on a custom connector, or prefetch.
+
+### `afterDownload`
+
+Runs after the component JSON is downloaded.
+
+Return a **replacement** component object to mutate what will be installed.
+
+### `beforeInstall`
+
+Runs once per **downloaded** component before files are written.
+
+You can return a new **`DownloadedComponent`** to substitute.
+
+### `transformImport`
+
+Transform output import specifiers when processing TS/JS files.
+
+### `transform`
+
+Transform the file content, useful for codemods, license headers, or framework-specific tweaks.
+
+Return the updated file content.
+
+<Callout>`transform` is executed after the default transform.</Callout>

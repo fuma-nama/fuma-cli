@@ -1,0 +1,31 @@
+---
+title: Introduction
+description: Build your own Shadcn CLI.
+---
+
+Fuma CLI is a toolkit for building **your own [shadcn/ui](https://ui.shadcn.com)-style CLI**.
+
+- Compiles registries (your components, hooks, and shared files) into installable JSON bundles
+- Provides an installer that install & adopt component files into consumer's codebase.
+
+## Why Fuma CLI
+
+Fuma CLI addresses a few problems when maintaing larger registries:
+
+- **Automatic sub-components and file references**: The compiler walks TypeScript/JavaScript imports, groups shared files. Without maintaining every edge manually, your component will always be installed correctly and predictably.
+- **Monorepo-friendly**: Split registries across workspaces; Native support for **sub-registries** and cross-registry references.
+
+Same as **Shadcn CLI**, it ships code that adopts to consumer's codebase, allowing full control over the installed code.
+What is different:
+
+- **Distribution**: Your registry will be consumed through your own CLI tool rather than `shadcn` CLI.
+- **More Control**: You will have more control on the installer, e.g. transform file contents when installing components.
+
+## How it works
+
+The distribution flow as follows:
+
+1. Define registry & components in your repo.
+2. Compile registry with Fuma CLI to produce bundled files.
+3. Serve the bundled files via CDNs/Web.
+4. In your CLI package, install the components using Fuma CLI installer.

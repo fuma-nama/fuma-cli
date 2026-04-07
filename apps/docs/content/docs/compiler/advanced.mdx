@@ -1,0 +1,18 @@
+---
+title: Pipeline
+description: High-level explanation of compilation stages.
+---
+
+`compile()` walks your source in three broad steps:
+
+1. Build a **file graph** from listed files and their imports
+2. **Split** that graph into chunks (one output component per chunk)
+3. **Transform** each file to preparse for installation (e.g. internal imports).
+
+<Mermaid
+  chart={`flowchart LR
+  FG[File graph] --> CH[Chunks]
+  CH --> TR[Transform]
+  TR --> OUT[Registry JSON]
+`}
+/>
