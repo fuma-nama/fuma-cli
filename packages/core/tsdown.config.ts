@@ -2,6 +2,7 @@ import { defineConfig } from "tsdown";
 
 export default defineConfig({
   entry: [
+    "./src/detect.ts",
     "./src/{index,config}.ts",
     "./src/registry/{connector,schema}.ts",
     "./src/registry/installer/index.ts",
