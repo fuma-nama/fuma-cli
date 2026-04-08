@@ -13,6 +13,7 @@
   "type": "module",
   "exports": {
     "./compiler": "./dist/compiler/index.js",
+    "./detect": "./dist/detect.js",
     "./macros/route-handler": "./dist/macros/route-handler.js",
     "./registry/connector": "./dist/registry/connector.js",
     "./registry/installer": "./dist/registry/installer/index.js",

@@ -1,4 +1,5 @@
 export const typescriptExtensions = [".ts", ".tsx", ".js", ".jsx"];
+export const SUPPORTED_LANGS = ["js", "jsx", "ts", "tsx", "dts"] as const;
 export const SUPPORTED_FRAMEWORKS = [
   "next",
   "waku",

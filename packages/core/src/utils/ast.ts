@@ -9,13 +9,7 @@ import type {
 } from "@oxc-project/types";
 
 /**
- * Return the import modifier for `sourceFile` to import `referenceFile`
- *
- * @example
- * ```ts
- * toReferencePath('index.ts', 'dir/hello.ts')
- * // should output './dir/hello'
- * ```
+ * Return the import specifier for `sourceFile` to import `referenceFile`
  */
 export function toImportSpecifier(sourceFile: string, referenceFile: string): string {
   const extname = path.extname(referenceFile);

@@ -1,11 +1,11 @@
 import path from "node:path";
 import fs from "node:fs/promises";
-import { Framework, typescriptExtensions } from "@/constants";
+import { type Framework, SUPPORTED_LANGS } from "@/constants";
 import { toImportSpecifier, transformSpecifiers } from "@/utils/ast";
 import type { File } from "@/registry/schema";
 import type { RegistryConnector } from "@/registry/connector";
 import { createDeps } from "@/registry/installer/dep-manager";
-import { parse } from "oxc-parser";
+import { parseSync } from "oxc-parser";
 import MagicString from "magic-string";
 import { decodeImport, getComponentFileId } from "../protocols/import";
 import type { Awaitable } from "@/types";
@@ -75,6 +75,8 @@ export interface ComponentInstallerOptions {
    * The preferred Web framework, installer will generate code based on the framework.
    *
    * If the target framework isn't supported, you can still pass `none` for framework-agnostic code.
+   *
+   * @default `none`
    */
   framework?: Framework;
   outDir?: Partial<OutputDestinations>;
@@ -200,9 +202,7 @@ export class ComponentInstaller {
   ): Promise<string> {
     const plugins = this.config.plugins ?? [];
     const transformCtx: TransformContext = { installer: this, file, filePath, component, ...ctx };
-    let transformed = typescriptExtensions.includes(path.extname(filePath))
-      ? await this.defaultTransform(file.content, transformCtx)
-      : file.content;
+    let transformed = await this.defaultTransform(file.content, transformCtx);
 
     for (const plugin of plugins) {
       if (plugin.transform) {
@@ -216,12 +216,17 @@ export class ComponentInstaller {
   private async defaultTransform(content: string, ctx: TransformContext) {
     const { file, importLookup, filePath } = ctx;
     const config = this.config;
-    const plugins = this.config.plugins ?? [];
-    const parsed = await parse(filePath, content);
+    const ext = path.extname(filePath);
+    const lang = SUPPORTED_LANGS.find((lang) => `.${lang}` === ext);
+    if (!lang) return content;
+
+    const parsed = parseSync(filePath, content, {
+      lang,
+    });
     const s = new MagicString(content);
 
     transformSpecifiers(parsed.program, s, (specifier) => {
-      for (const plugin of plugins) {
+      for (const plugin of config.plugins ?? []) {
         if (plugin.transformImport) {
           specifier = plugin.transformImport(specifier, ctx);
         }

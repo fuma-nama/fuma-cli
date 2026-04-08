@@ -103,7 +103,7 @@ async function resolveFile(
     ".jsx": "js",
   };
   const astType = astTypes[path.extname(filePath)];
-  const content = node.resolved.content ?? (await fs.readFile(filePath)).toString();
+  const content = node.resolved.content ?? (await fs.readFile(filePath, "utf-8"));
 
   if (!astType) {
     node.scanned = {
