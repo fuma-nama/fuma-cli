@@ -1,5 +1,12 @@
 # fuma-cli
 
+## 0.0.4
+
+### Patch Changes
+
+- c846a09: detect default framework option from `cwd`
+- aa2c715: Support `detect` util
+
 ## 0.0.3
 
 ### Patch Changes
