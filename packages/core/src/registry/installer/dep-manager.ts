@@ -2,11 +2,7 @@ import fs from "node:fs/promises";
 import { x } from "tinyexec";
 import path from "node:path";
 import { detect, type AgentName } from "package-manager-detector";
-
-interface PackageJsonType {
-  dependencies?: Record<string, string>;
-  devDependencies?: Record<string, string>;
-}
+import type { PackageJson } from "@/types";
 
 export async function createDeps(
   cwd: string,
@@ -15,8 +11,8 @@ export async function createDeps(
 ) {
   const packageJsonPath = path.join(cwd, "package.json");
   const packageJson = await fs
-    .readFile(packageJsonPath)
-    .then((res) => JSON.parse(res.toString()) as PackageJsonType)
+    .readFile(packageJsonPath, "utf-8")
+    .then((res) => JSON.parse(res) as PackageJson)
     .catch(() => null);
 
   return new DependencyManager(cwd, packageJson, dependencies, devDependencies);
@@ -28,7 +24,7 @@ export class DependencyManager {
 
   constructor(
     private readonly cwd: string,
-    private readonly packageJson: PackageJsonType | null,
+    private readonly packageJson: PackageJson | null,
     dependencies: Record<string, string | null>,
     devDependencies: Record<string, string | null>,
   ) {

@@ -19,10 +19,7 @@ import { HttpRegistryConnector } from "fuma-cli/registry/connector";
 const installer = new ComponentInstaller(
   new HttpRegistryConnector("https://registry.example.com"),
   {
-    framework: "next",
-    outDir: {
-      base: "",
-    },
+    // options
   },
 );
 
@@ -37,6 +34,37 @@ if (dm.hasRequired()) await dm.installRequired(); // runs detected package manag
 
 `install()` returns an object for futher actions, such as install require dependencies.
 
+### `framework`
+
+Fuma CLI generates code based on consumer's framework (e.g. `next` or `tanstack-start`).
+
+Instead of detecting automatically, you can specify it:
+
+```ts
+import { ComponentInstaller } from "fuma-cli/registry/installer";
+
+const installer = new ComponentInstaller(connector, {
+  // 'none' = framework-agnostic
+  framework: "none",
+});
+```
+
 ### `io`
 
 Customise the IO interface, useful for integrating with your own TUI.
+
+```ts
+import { ComponentInstaller } from "fuma-cli/registry/installer";
+
+const installer = new ComponentInstaller(connector, {
+  io: {
+    onWarn(message) {
+      console.warn(message);
+    },
+    confirmFileOverride() {
+      return true;
+    },
+    onFileDownloaded() {},
+  },
+});
+```

@@ -1,6 +1,6 @@
 import path from "node:path";
 import fs from "node:fs/promises";
-import { type Framework, SUPPORTED_LANGS } from "@/constants";
+import { type Framework, JS_LANGS } from "@/constants";
 import { toImportSpecifier, transformSpecifiers } from "@/utils/ast";
 import type { File } from "@/registry/schema";
 import type { RegistryConnector } from "@/registry/connector";
@@ -18,6 +18,7 @@ import {
 import { DownloadedComponent, DownloadManager } from "./download-manager";
 import { defaultIO, type IOInterface } from "./io";
 import { existsSync } from "node:fs";
+import { detectFramework } from "@/detect";
 
 export interface TransformContext extends InstallContext {
   file: File;
@@ -27,17 +28,16 @@ export interface TransformContext extends InstallContext {
 }
 
 export interface InstallContext {
-  /** all installed files, reduce unnecessary file writes */
-  _installedFilePaths: Set<string>;
-
   dependencies: Record<string, string | null>;
   devDependencies: Record<string, string | null>;
-
-  importLookup: Map<string, File>;
   /** full variables of the current component. */
   $variables: Record<string, unknown>;
   /** the last item is always the current component. */
   stack: DownloadedComponent[];
+
+  _fileIdToFile: Map<string, File>;
+  /** all installed files, reduce unnecessary file writes */
+  _installedFilePaths: Set<string>;
 }
 
 export interface DownloadContext {
@@ -72,11 +72,11 @@ export interface ComponentInstallerOptions {
   cwd?: string;
   io?: IOInterface;
   /**
-   * The preferred Web framework, installer will generate code based on the framework.
+   * The preferred framework, installer will generate code based on the framework.
    *
-   * If the target framework isn't supported, you can still pass `none` for framework-agnostic code.
+   * If not specified, it detects from user's workspace.
    *
-   * @default `none`
+   * If the target framework isn't supported, it's recommended to use `none` for framework-agnostic code.
    */
   framework?: Framework;
   outDir?: Partial<OutputDestinations>;
@@ -89,10 +89,11 @@ export class ComponentInstaller {
   private readonly downloader: DownloadManager;
   private readonly io: IOInterface;
   private destinations: OutputDestinations | undefined;
+  private _framework: Awaitable<Framework> | undefined;
 
   constructor(
     private readonly connector: RegistryConnector,
-    private readonly config: ComponentInstallerOptions,
+    private readonly config: ComponentInstallerOptions = {},
   ) {
     this.cwd = config.cwd ?? process.cwd();
     this.io = config.io ?? defaultIO();
@@ -103,9 +104,9 @@ export class ComponentInstaller {
     // avoid circular refs
     if (ctx.stack.indexOf(comp) !== ctx.stack.length - 1) return;
 
-    const plugins = this.config.plugins ?? [];
+    const framework = await this.getFramework();
     const pluginCtx = { installer: this, ...ctx };
-    for (const plugin of plugins) {
+    for (const plugin of this.config.plugins ?? []) {
       comp = (await plugin.beforeInstall?.(comp, pluginCtx)) ?? comp;
     }
 
@@ -113,7 +114,7 @@ export class ComponentInstaller {
     Object.assign(ctx.devDependencies, comp.devDependencies);
 
     for (const file of comp.files) {
-      const outPath = this.resolveOutputPath(file);
+      const outPath = this.resolveOutputPath(framework, file);
       if (ctx._installedFilePaths.has(outPath)) continue;
       ctx._installedFilePaths.add(outPath);
 
@@ -159,30 +160,26 @@ export class ComponentInstaller {
     const dependencies: Record<string, string | null> = {};
     const devDependencies: Record<string, string | null> = {};
     const downloaded = await this.downloader.download(this.connector, name, subRegistry);
-
-    const allComponents = new Set<DownloadedComponent>();
-    function scan(comp: DownloadedComponent) {
-      if (allComponents.has(comp)) return;
-
-      allComponents.add(comp);
-      for (const child of comp.$subComponents) scan(child);
-    }
-
-    scan(downloaded);
-
     const importLookup = new Map<string, File>();
-    for (const comp of allComponents) {
+
+    function scan(comp: DownloadedComponent, visited: Set<DownloadedComponent> = new Set()) {
+      if (visited.has(comp)) return;
+
       for (const file of comp.files) {
         importLookup.set(getComponentFileId(file), file);
       }
+
+      visited.add(comp);
+      for (const child of comp.$subComponents) scan(child, visited);
     }
 
+    scan(downloaded);
     const info = await downloaded.$registry.root.fetchRegistryInfo();
     await this.installComponent(downloaded, {
       _installedFilePaths: new Set(),
       dependencies,
       devDependencies,
-      importLookup,
+      _fileIdToFile: importLookup,
       $variables: { ...info.env, ...downloaded.variables },
       stack: [downloaded],
     });
@@ -214,16 +211,17 @@ export class ComponentInstaller {
   }
 
   private async defaultTransform(content: string, ctx: TransformContext) {
-    const { file, importLookup, filePath } = ctx;
+    const { file, _fileIdToFile, filePath } = ctx;
     const config = this.config;
     const ext = path.extname(filePath);
-    const lang = SUPPORTED_LANGS.find((lang) => `.${lang}` === ext);
+    const lang = JS_LANGS.find((lang) => `.${lang}` === ext);
     if (!lang) return content;
 
     const parsed = parseSync(filePath, content, {
       lang,
     });
     const s = new MagicString(content);
+    const framework = await this.getFramework();
 
     transformSpecifiers(parsed.program, s, (specifier) => {
       for (const plugin of config.plugins ?? []) {
@@ -234,33 +232,31 @@ export class ComponentInstaller {
 
       const decoded = decodeImport(specifier);
       if (decoded.type === "local") {
-        const resolvedFile = importLookup.get(decoded.fileId);
+        const resolvedFile = _fileIdToFile.get(decoded.fileId);
         if (!resolvedFile) {
           this.io.onWarn(`cannot find the referenced file of ${specifier}`);
           return specifier;
         }
 
-        return toImportSpecifier(filePath, this.resolveOutputPath(resolvedFile));
+        return toImportSpecifier(filePath, this.resolveOutputPath(framework, resolvedFile));
       }
 
       return decoded.specifier;
     });
 
     if (file.type === "route-handler") {
-      transformRouteHandler(file.route, filePath, config.framework ?? "none", parsed.program, s);
+      transformRouteHandler(file.route, filePath, framework, parsed.program, s);
 
-      if (config.framework === "react-router") {
+      if (framework === "react-router") {
         const routesFile = path.join(this.cwd, "app/routes.ts");
-        const content = await fs
-          .readFile(routesFile, "utf-8")
-          .then((res) => res.toString())
-          .catch(() => null);
+        const content = await fs.readFile(routesFile, "utf-8").catch(() => null);
 
-        if (content)
+        if (content) {
           await addReactRouterRouteToFile(routesFile, content, {
             path: resolveReactRouterRoute(file.route),
             module: path.relative(path.dirname(routesFile), filePath),
           });
+        }
       }
     }
 
@@ -281,12 +277,17 @@ export class ComponentInstaller {
     });
   }
 
-  private resolveOutputPath(file: File): string {
-    const config = this.config;
+  private async getFramework() {
+    if (this._framework) return this._framework;
+
+    return (this._framework = this.config.framework ?? detectFramework(this.cwd));
+  }
+
+  private resolveOutputPath(framework: Framework, file: File): string {
     const destinations = this.getOutputDestinations();
 
     if (file.type === "route-handler") {
-      const rel = resolveRouteFilePath(file.route, config.framework ?? "none", "ts");
+      const rel = resolveRouteFilePath(file.route, framework, "ts");
       return path.resolve(this.cwd, destinations.base, rel);
     }
 
@@ -298,3 +299,6 @@ export class ComponentInstaller {
     return path.resolve(this.cwd, destinations.base, dir, path.basename(file.path));
   }
 }
+
+export type { IOInterface } from "./io";
+export type { DownloadedComponent } from "./download-manager";

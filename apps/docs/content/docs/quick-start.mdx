@@ -46,6 +46,10 @@ export const registry: Registry = {
 };
 ```
 
+<Callout type="warn" title="Common pitfalls">
+  The same file cannot belong to two different top-level components.
+</Callout>
+
 Now compile & write the output via a script:
 
 ```ts title="my-repo/scripts/compile.ts"
@@ -94,13 +98,12 @@ export class MyComponentInstaller extends ComponentInstaller {
     const connector = new HttpRegistryConnector("https://acme-ui.com");
 
     super(connector, {
-      // the Web framework consumer prefers
-      framework: "none",
-
-      // where to write components, e.g.
+      // optional: where to write components
       outDir: {
         base: "src",
       },
+
+      // use our own TUI
       io: {
         onWarn(message) {
           console.warn(message);
@@ -174,6 +177,48 @@ await install(["button"]);
 node scripts/test-install.ts
 ```
 
-## Common pitfalls
+## Examples
 
-- The **same absolute file path** cannot belong to two different top-level components.
+### Interactive Install UI
+
+Allow user to select components to install.
+
+```ts
+import { isCancel, autocompleteMultiselect, outro, spinner } from "@clack/prompts";
+import picocolors from "picocolors";
+import { RegistryConnector } from "fuma-cli/registry/connector";
+import { install } from "@/commands/install";
+
+interface AddOption {
+  label: string;
+  value: string;
+  hint?: string;
+}
+
+export async function add() {
+  // add your connector
+  const connector: RegistryConnector;
+
+  const spin = spinner();
+  spin.start("fetching registry");
+  const info = await connector.fetchRegistryInfo();
+
+  spin.stop(picocolors.bold(picocolors.greenBright("registry fetched")));
+  const value = await autocompleteMultiselect({
+    message: "Select components to install",
+    options: info.indexes.map<AddOption>((item) => ({
+      label: item.title ?? item.name,
+      value: item.name,
+      hint: item.description,
+    })),
+  });
+
+  if (isCancel(value)) {
+    outro("Ended");
+    return;
+  }
+
+  await install(value);
+  outro(picocolors.bold(picocolors.greenBright("Successful")));
+}
+```
