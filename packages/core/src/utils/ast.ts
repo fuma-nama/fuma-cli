@@ -1,5 +1,5 @@
 import path from "node:path";
-import { typescriptExtensions } from "@/constants";
+import { JS_LANGS } from "@/constants";
 import { type Program, Visitor } from "oxc-parser";
 import type MagicString from "magic-string";
 import type {
@@ -13,7 +13,7 @@ import type {
  */
 export function toImportSpecifier(sourceFile: string, referenceFile: string): string {
   const extname = path.extname(referenceFile);
-  const removeExt = typescriptExtensions.includes(extname);
+  const removeExt = JS_LANGS.some((lang) => `.${lang}` === extname);
 
   let importPath = path
     .relative(

@@ -7,8 +7,8 @@ export type ImportInfo =
       specifier: string;
     }
   | {
-      /** file in the same component/chunk, should be the target path, or the route of a component file */
       type: "local";
+      /** use `getComponentFileId()` to obtain */
       fileId: string;
     };
 

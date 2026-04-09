@@ -30,7 +30,7 @@ async function detectFrameworkFromConfigFiles(dir: string): Promise<Framework> {
 }
 
 /**
- * Detects the preferred Web framework.
+ * Detects the preferred framework/tech stack.
  */
 export async function detectFramework(cwd = process.cwd()): Promise<Framework> {
   const packageJson = await findNearestPackageJson(cwd);
@@ -40,7 +40,11 @@ export async function detectFramework(cwd = process.cwd()): Promise<Framework> {
   const result = await detectFrameworkFromConfigFiles(projectDir);
   if (result !== "none") return result;
 
-  return detectFrameworkFromPackageJson(JSON.parse(packageJson.content) as PackageJson);
+  try {
+    return detectFrameworkFromPackageJson(JSON.parse(packageJson.content) as PackageJson);
+  } catch {
+    return "none";
+  }
 }
 
 async function findNearestPackageJson(startDir: string): Promise<{
