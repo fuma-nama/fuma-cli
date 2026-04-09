@@ -94,13 +94,12 @@ export class MyComponentInstaller extends ComponentInstaller {
     const connector = new HttpRegistryConnector("https://acme-ui.com");
 
     super(connector, {
-      // the Web framework consumer prefers
-      framework: "none",
-
-      // where to write components, e.g.
+      // optional: where to write components
       outDir: {
         base: "src",
       },
+
+      // use our own TUI
       io: {
         onWarn(message) {
           console.warn(message);

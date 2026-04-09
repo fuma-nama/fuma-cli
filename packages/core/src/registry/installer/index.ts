@@ -93,7 +93,7 @@ export class ComponentInstaller {
 
   constructor(
     private readonly connector: RegistryConnector,
-    private readonly config: ComponentInstallerOptions,
+    private readonly config: ComponentInstallerOptions = {},
   ) {
     this.cwd = config.cwd ?? process.cwd();
     this.io = config.io ?? defaultIO();
