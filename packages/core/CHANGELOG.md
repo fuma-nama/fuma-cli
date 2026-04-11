@@ -1,5 +1,11 @@
 # fuma-cli
 
+## 0.0.5
+
+### Patch Changes
+
+- c5e902a: add `add()` to interactive Fuma CLI
+
 ## 0.0.4
 
 ### Patch Changes
