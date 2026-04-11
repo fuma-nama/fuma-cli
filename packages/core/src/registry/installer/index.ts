@@ -88,16 +88,26 @@ export class ComponentInstaller {
   private readonly cwd: string;
   private readonly downloader: DownloadManager;
   private readonly io: IOInterface;
-  private destinations: OutputDestinations | undefined;
+  private readonly destinations: OutputDestinations;
   private _framework: Awaitable<Framework> | undefined;
 
   constructor(
-    private readonly connector: RegistryConnector,
+    protected readonly connector: RegistryConnector,
     private readonly config: ComponentInstallerOptions = {},
   ) {
     this.cwd = config.cwd ?? process.cwd();
     this.io = config.io ?? defaultIO();
     this.downloader = new DownloadManager(config);
+
+    const outDir = config.outDir ?? {};
+    this.destinations = {
+      base: outDir.base ?? (existsSync(path.join(this.cwd, "./src")) ? "src" : ""),
+      components: outDir.components ?? "components",
+      css: outDir.css ?? "css",
+      layout: outDir.layout ?? "components/layouts",
+      lib: outDir.lib ?? "lib",
+      ui: outDir.ui ?? "components/ui",
+    };
   }
 
   private async installComponent(comp: DownloadedComponent, ctx: InstallContext) {
@@ -263,20 +273,6 @@ export class ComponentInstaller {
     return s.toString();
   }
 
-  private getOutputDestinations(): OutputDestinations {
-    if (this.destinations) return this.destinations;
-    const v = this.config.outDir;
-
-    return (this.destinations = {
-      base: v?.base ?? (existsSync(path.join(this.cwd, "./src")) ? "src" : ""),
-      components: v?.components ?? "components",
-      css: v?.css ?? "css",
-      layout: v?.layout ?? "components/layouts",
-      lib: v?.lib ?? "lib",
-      ui: v?.ui ?? "components/ui",
-    });
-  }
-
   private async getFramework() {
     if (this._framework) return this._framework;
 
@@ -284,19 +280,17 @@ export class ComponentInstaller {
   }
 
   private resolveOutputPath(framework: Framework, file: File): string {
-    const destinations = this.getOutputDestinations();
-
     if (file.type === "route-handler") {
       const rel = resolveRouteFilePath(file.route, framework, "ts");
-      return path.resolve(this.cwd, destinations.base, rel);
+      return path.resolve(this.cwd, this.destinations.base, rel);
     }
 
-    const dir = destinations[file.type];
+    const dir = this.destinations[file.type];
     if (file.target) {
-      return path.resolve(this.cwd, destinations.base, file.target.replace("<dir>", dir));
+      return path.resolve(this.cwd, this.destinations.base, file.target.replace("<dir>", dir));
     }
 
-    return path.resolve(this.cwd, destinations.base, dir, path.basename(file.path));
+    return path.resolve(this.cwd, this.destinations.base, dir, path.basename(file.path));
   }
 }
 
