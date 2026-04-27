@@ -13,9 +13,9 @@ export default defineConfig({
   format: "esm",
   dts: true,
   fixedExtension: false,
-  target: "node22",
+  target: "es2023",
   deps: {
-    onlyBundle: [],
+    onlyBundle: ["package-manager-detector"],
   },
   exports: {
     enabled: true,
