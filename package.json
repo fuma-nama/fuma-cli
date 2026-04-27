@@ -13,12 +13,12 @@
     "test": "vitest"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.30.0",
-    "oxfmt": "^0.44.0",
-    "oxlint": "^1.59.0",
-    "turbo": "^2.9.4",
-    "typescript": "6.0.2",
-    "vitest": "^4.1.2"
+    "@changesets/cli": "^2.31.0",
+    "oxfmt": "^0.47.0",
+    "oxlint": "^1.62.0",
+    "turbo": "^2.9.6",
+    "typescript": "6.0.3",
+    "vitest": "^4.1.5"
   },
   "engines": {
     "node": ">=22"

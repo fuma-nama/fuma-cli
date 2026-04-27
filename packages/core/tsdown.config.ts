@@ -4,6 +4,7 @@ export default defineConfig({
   entry: [
     "./src/detect.ts",
     "./src/{index,config}.ts",
+    "./src/protocols/*.ts",
     "./src/registry/{connector,schema}.ts",
     "./src/registry/installer/index.ts",
     "./src/macros/route-handler.ts",
@@ -12,9 +13,9 @@ export default defineConfig({
   format: "esm",
   dts: true,
   fixedExtension: false,
-  target: "node22",
+  target: "es2023",
   deps: {
-    onlyBundle: [],
+    onlyBundle: ["package-manager-detector"],
   },
   exports: {
     enabled: true,

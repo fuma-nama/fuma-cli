@@ -14,20 +14,23 @@ export const indexSchema = z.object({
   description: z.string().optional(),
 });
 
-export const routeFileSchema = z.object({
-  type: z.literal("route-handler"),
-  route: z.string(),
+const baseFileSchema = z.object({
   content: z.string(),
+  /** custom data for file */
+  meta: z.unknown().optional(),
 });
 
-export const fileSchema = z
-  .object({
+export const fileSchema = z.union([
+  baseFileSchema.extend({
     type: z.literal(["components", "lib", "css", "ui", "layout"]),
     path: z.string(),
     target: z.string().optional(),
-    content: z.string(),
-  })
-  .or(routeFileSchema);
+  }),
+  baseFileSchema.extend({
+    type: z.literal("route-handler"),
+    route: z.string(),
+  }),
+]);
 
 export const subComponentReference = z.union([
   // name
@@ -58,30 +61,16 @@ export const componentSchema = z.object({
    */
   subComponents: z.array(subComponentReference).default([]),
 
-  /**
-   * override variables for the current component & its sub components.
-   */
-  variables: z.record(z.string(), z.unknown()).optional(),
+  /** custom data for component */
+  meta: z.unknown().optional(),
 });
 
 export const registryInfoSchema = z.object({
-  /**
-   * define metadata for variables, variables can be accessed in plugins.
-   */
-  variables: z
-    .record(
-      z.string(),
-      z.object({
-        description: z.string().optional(),
-      }),
-    )
-    .optional(),
-  /**
-   * override variables for all components.
-   */
-  env: z.record(z.string(), z.unknown()).optional(),
   indexes: z.array(indexSchema).default([]),
   unlistedIndexes: z.array(indexSchema).default([]),
 
+  /** names for sub registries */
   registries: z.array(z.string()).optional(),
+  /** custom data for registry */
+  meta: z.unknown().optional(),
 });

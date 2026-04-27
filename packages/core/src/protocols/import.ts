@@ -1,5 +1,5 @@
 import type { ComponentFile } from "@/compiler";
-import type { CompiledFile } from "../schema";
+import type { CompiledFile } from "@/registry/schema";
 
 export type ImportInfo =
   | {

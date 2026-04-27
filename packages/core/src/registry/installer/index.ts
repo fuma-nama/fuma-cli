@@ -7,7 +7,7 @@ import type { RegistryConnector } from "@/registry/connector";
 import { createDeps } from "@/registry/installer/dep-manager";
 import { parseSync } from "oxc-parser";
 import MagicString from "magic-string";
-import { decodeImport, getComponentFileId } from "../protocols/import";
+import { decodeImport, getComponentFileId } from "@/protocols/import";
 import type { Awaitable } from "@/types";
 import { transformRouteHandler } from "@/macros/route-handler.build";
 import {
@@ -30,8 +30,6 @@ export interface TransformContext extends InstallContext {
 export interface InstallContext {
   dependencies: Record<string, string | null>;
   devDependencies: Record<string, string | null>;
-  /** full variables of the current component. */
-  $variables: Record<string, unknown>;
   /** the last item is always the current component. */
   stack: DownloadedComponent[];
 
@@ -88,16 +86,26 @@ export class ComponentInstaller {
   private readonly cwd: string;
   private readonly downloader: DownloadManager;
   private readonly io: IOInterface;
-  private destinations: OutputDestinations | undefined;
+  private readonly destinations: OutputDestinations;
   private _framework: Awaitable<Framework> | undefined;
 
   constructor(
-    private readonly connector: RegistryConnector,
+    protected readonly connector: RegistryConnector,
     private readonly config: ComponentInstallerOptions = {},
   ) {
     this.cwd = config.cwd ?? process.cwd();
     this.io = config.io ?? defaultIO();
     this.downloader = new DownloadManager(config);
+
+    const outDir = config.outDir ?? {};
+    this.destinations = {
+      base: outDir.base ?? (existsSync(path.join(this.cwd, "./src")) ? "src" : ""),
+      components: outDir.components ?? "components",
+      css: outDir.css ?? "css",
+      layout: outDir.layout ?? "components/layouts",
+      lib: outDir.lib ?? "lib",
+      ui: outDir.ui ?? "components/ui",
+    };
   }
 
   private async installComponent(comp: DownloadedComponent, ctx: InstallContext) {
@@ -142,17 +150,7 @@ export class ComponentInstaller {
 
     for (const child of comp.$subComponents) {
       const stack = [...ctx.stack, child];
-      const variables = { ...ctx.$variables };
-      if (
-        child.$registry.root.id !== comp.$registry.root.id ||
-        child.$registry.subRegistry !== comp.$registry.subRegistry
-      ) {
-        const info = await child.$registry.root.fetchRegistryInfo(child.$registry.subRegistry);
-        Object.assign(variables, info.variables);
-      }
-      Object.assign(variables, child.variables);
-
-      await this.installComponent(child, { ...ctx, stack, $variables: variables });
+      await this.installComponent(child, { ...ctx, stack });
     }
   }
 
@@ -174,13 +172,11 @@ export class ComponentInstaller {
     }
 
     scan(downloaded);
-    const info = await downloaded.$registry.root.fetchRegistryInfo();
     await this.installComponent(downloaded, {
       _installedFilePaths: new Set(),
       dependencies,
       devDependencies,
       _fileIdToFile: importLookup,
-      $variables: { ...info.env, ...downloaded.variables },
       stack: [downloaded],
     });
 
@@ -263,20 +259,6 @@ export class ComponentInstaller {
     return s.toString();
   }
 
-  private getOutputDestinations(): OutputDestinations {
-    if (this.destinations) return this.destinations;
-    const v = this.config.outDir;
-
-    return (this.destinations = {
-      base: v?.base ?? (existsSync(path.join(this.cwd, "./src")) ? "src" : ""),
-      components: v?.components ?? "components",
-      css: v?.css ?? "css",
-      layout: v?.layout ?? "components/layouts",
-      lib: v?.lib ?? "lib",
-      ui: v?.ui ?? "components/ui",
-    });
-  }
-
   private async getFramework() {
     if (this._framework) return this._framework;
 
@@ -284,19 +266,17 @@ export class ComponentInstaller {
   }
 
   private resolveOutputPath(framework: Framework, file: File): string {
-    const destinations = this.getOutputDestinations();
-
     if (file.type === "route-handler") {
       const rel = resolveRouteFilePath(file.route, framework, "ts");
-      return path.resolve(this.cwd, destinations.base, rel);
+      return path.resolve(this.cwd, this.destinations.base, rel);
     }
 
-    const dir = destinations[file.type];
+    const dir = this.destinations[file.type];
     if (file.target) {
-      return path.resolve(this.cwd, destinations.base, file.target.replace("<dir>", dir));
+      return path.resolve(this.cwd, this.destinations.base, file.target.replace("<dir>", dir));
     }
 
-    return path.resolve(this.cwd, destinations.base, dir, path.basename(file.path));
+    return path.resolve(this.cwd, this.destinations.base, dir, path.basename(file.path));
   }
 }
 

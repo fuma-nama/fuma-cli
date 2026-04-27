@@ -1,6 +1,15 @@
 import { ComponentInstaller, ComponentInstallerOptions } from "fuma-cli/registry/installer";
 import { RegistryConnector } from "fuma-cli/registry/connector";
-import { box, confirm, isCancel, log, outro, spinner, SpinnerResult } from "@clack/prompts";
+import {
+  autocompleteMultiselect,
+  box,
+  confirm,
+  isCancel,
+  log,
+  outro,
+  spinner,
+  SpinnerResult,
+} from "@clack/prompts";
 import picocolors from "picocolors";
 import { detect } from "package-manager-detector";
 
@@ -37,6 +46,41 @@ export class FumadocsComponentInstaller extends ComponentInstaller {
         },
       },
     });
+  }
+
+  async add(config: { subRegistries?: string[] } = {}) {
+    const { subRegistries = [] } = config;
+    const connector = this.connector;
+
+    const spin = spinner();
+    spin.start("fetching registry");
+
+    async function scan(subRegistry?: string) {
+      const info = await connector.fetchRegistryInfo(subRegistry);
+
+      return info.indexes.map((item) => ({
+        label: item.title ?? item.name,
+        value: { name: item.name, subRegistry },
+        hint: item.description,
+      }));
+    }
+
+    spin.stop(picocolors.bold(picocolors.greenBright("registry fetched")));
+    const value = await autocompleteMultiselect({
+      message: "Select components to install",
+      options: (await Promise.all([scan(), ...subRegistries.map(scan)])).flat(),
+    });
+
+    if (isCancel(value)) {
+      outro("Ended");
+      return;
+    }
+
+    for (const target of value) {
+      await this.installInteractive(target.name, target.subRegistry);
+    }
+
+    outro(picocolors.bold(picocolors.greenBright("Successful")));
   }
 
   async installInteractive(name: string, subRegistry?: string): Promise<void> {
