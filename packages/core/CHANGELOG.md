@@ -1,5 +1,11 @@
 # fuma-cli
 
+## 0.0.6
+
+### Patch Changes
+
+- d1932c8: Make tsconfig & package.json paths optional
+
 ## 0.0.5
 
 ### Patch Changes

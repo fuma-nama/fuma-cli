@@ -1,6 +1,6 @@
 {
   "name": "@fuma-cli/interactive",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Pre-built interactive interface for Fuma CLI",
   "keywords": [],
   "homepage": "https://cli.fuma-nama.dev",
