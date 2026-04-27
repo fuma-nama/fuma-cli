@@ -4,6 +4,7 @@ export default defineConfig({
   entry: [
     "./src/detect.ts",
     "./src/{index,config}.ts",
+    "./src/protocols/*.ts",
     "./src/registry/{connector,schema}.ts",
     "./src/registry/installer/index.ts",
     "./src/macros/route-handler.ts",

@@ -1,11 +1,10 @@
 import path from "node:path";
 import fs from "node:fs/promises";
-import type { CompileContext, Reference, Registry } from "./compile";
+import type { CompileContext, Reference } from "./compile";
 import { parse, type ParseResult } from "oxc-parser";
 import { visitSpecifiers } from "@/utils/ast";
 import { MACRO_PATH } from "@/constants";
 import { ResolverFactory } from "oxc-resolver";
-import type { PackageJson } from "@/types";
 
 export type RawReference =
   | {
@@ -40,11 +39,8 @@ export type ScanResult =
       type: "resolving";
     };
 
-// absolute path -> info
-export type PackageJsonMap = Map<string, { data: PackageJson | null; registry: Registry }>;
-
 export async function resolveFiles(ctx: CompileContext) {
-  const { root, fileGraph } = ctx;
+  const { fileGraph } = ctx;
   // resolve anything possible
   const oxc = new ResolverFactory({
     extensions: [".js", ".jsx", ".ts", ".tsx", ".node"],
@@ -52,41 +48,11 @@ export async function resolveFiles(ctx: CompileContext) {
     tsconfig: "auto",
   });
 
-  // absolute path -> info
-  const packageJsons: PackageJsonMap = new Map();
-
-  async function findRegistryPackageJsons(registry: Registry) {
-    const packageJson = path.join(registry.dir, registry.packageJson);
-    if (packageJsons.has(packageJson)) return;
-
-    packageJsons.set(packageJson, {
-      data: await fs
-        .readFile(packageJson)
-        .then((res) => JSON.parse(res.toString()) as PackageJson)
-        .catch(() => null),
-      registry,
-    });
-
-    if (registry.subRegistries)
-      await Promise.all(registry.subRegistries.map(findRegistryPackageJsons));
-  }
-
-  await findRegistryPackageJsons(root);
-
-  await Promise.all(
-    Array.from(fileGraph.vertices()).map((file) => resolveFile(file, oxc, packageJsons, ctx)),
-  );
-
-  return { packageJsons };
+  await Promise.all(Array.from(fileGraph.vertices()).map((file) => resolveFile(file, oxc, ctx)));
 }
 
-async function resolveFile(
-  filePath: string,
-  oxc: ResolverFactory,
-  packageJsons: PackageJsonMap,
-  ctx: CompileContext,
-) {
-  const { fileGraph, onUnknownFile, isExternal, onParseReference } = ctx;
+async function resolveFile(filePath: string, oxc: ResolverFactory, ctx: CompileContext) {
+  const { fileGraph, onUnknownFile, isExternal, onParseReference, packageJsons } = ctx;
   let node = fileGraph.getVertex(filePath);
 
   if (!node) throw new Error(`vertex "${filePath}" should exist before resolving`);
@@ -185,7 +151,7 @@ async function resolveFile(
     imports,
   };
 
-  await Promise.all(next.map((ref) => resolveFile(ref, oxc, packageJsons, ctx)));
+  await Promise.all(next.map((ref) => resolveFile(ref, oxc, ctx)));
 }
 
 function isExternalDefault(ref: RawReference) {

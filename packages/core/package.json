@@ -15,6 +15,7 @@
     "./compiler": "./dist/compiler/index.js",
     "./detect": "./dist/detect.js",
     "./macros/route-handler": "./dist/macros/route-handler.js",
+    "./protocols/import": "./dist/protocols/import.js",
     "./registry/connector": "./dist/registry/connector.js",
     "./registry/installer": "./dist/registry/installer/index.js",
     "./registry/schema": "./dist/registry/schema.js",

@@ -7,7 +7,7 @@ import type { RegistryConnector } from "@/registry/connector";
 import { createDeps } from "@/registry/installer/dep-manager";
 import { parseSync } from "oxc-parser";
 import MagicString from "magic-string";
-import { decodeImport, getComponentFileId } from "../protocols/import";
+import { decodeImport, getComponentFileId } from "@/protocols/import";
 import type { Awaitable } from "@/types";
 import { transformRouteHandler } from "@/macros/route-handler.build";
 import {
@@ -30,8 +30,6 @@ export interface TransformContext extends InstallContext {
 export interface InstallContext {
   dependencies: Record<string, string | null>;
   devDependencies: Record<string, string | null>;
-  /** full variables of the current component. */
-  $variables: Record<string, unknown>;
   /** the last item is always the current component. */
   stack: DownloadedComponent[];
 
@@ -152,17 +150,7 @@ export class ComponentInstaller {
 
     for (const child of comp.$subComponents) {
       const stack = [...ctx.stack, child];
-      const variables = { ...ctx.$variables };
-      if (
-        child.$registry.root.id !== comp.$registry.root.id ||
-        child.$registry.subRegistry !== comp.$registry.subRegistry
-      ) {
-        const info = await child.$registry.root.fetchRegistryInfo(child.$registry.subRegistry);
-        Object.assign(variables, info.variables);
-      }
-      Object.assign(variables, child.variables);
-
-      await this.installComponent(child, { ...ctx, stack, $variables: variables });
+      await this.installComponent(child, { ...ctx, stack });
     }
   }
 
@@ -184,13 +172,11 @@ export class ComponentInstaller {
     }
 
     scan(downloaded);
-    const info = await downloaded.$registry.root.fetchRegistryInfo();
     await this.installComponent(downloaded, {
       _installedFilePaths: new Set(),
       dependencies,
       devDependencies,
       _fileIdToFile: importLookup,
-      $variables: { ...info.env, ...downloaded.variables },
       stack: [downloaded],
     });
 

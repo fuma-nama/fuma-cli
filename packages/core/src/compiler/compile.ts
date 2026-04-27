@@ -1,12 +1,14 @@
-import * as path from "node:path";
+import path from "node:path";
+import fs from "node:fs/promises";
 import type { CompiledComponent, CompiledFile, registryInfoSchema } from "@/registry/schema";
 import type { z } from "zod";
-import type { DistributiveOmit } from "@/types";
+import type { DistributiveOmit, PackageJson } from "@/types";
 import { BidirectedGraph } from "@/utils/graph";
-import { PackageJsonMap, RawReference, resolveFiles, ScanResult } from "./resolve";
+import { RawReference, resolveFiles, ScanResult } from "./resolve";
 import { type Chunk, ChunkType, ComponentChunk, generateChunks } from "./chunks";
 import { writechunks } from "./transform";
 import type { DependenciesConfig } from "./deps";
+import { findNearestPackageJson } from "@/utils/fs";
 
 export interface FileGraphInfo {
   scanned?: ScanResult;
@@ -37,6 +39,8 @@ export interface Component extends DependenciesConfig {
    * Don't list the component in registry index file
    */
   unlisted?: boolean;
+  /** custom data */
+  meta?: unknown;
 }
 
 export interface Registry
@@ -45,13 +49,13 @@ export interface Registry
     DependenciesConfig {
   /** unique name for registry (at least unique in the entire repository/monorepo) */
   name: string;
-  packageJson: string;
-  tsconfigPath: string;
+  packageJson?: string;
+  tsconfigPath?: string;
   components: Component[];
   subRegistries?: Registry[];
 
   /**
-   * The directory of registry, used to resolve relative paths
+   * The directory of registry, used to resolve relative paths & config files
    */
   dir: string;
 }
@@ -94,11 +98,10 @@ export interface CompileOptions {
 export interface CompileContext extends CompileOptions {
   fileGraph: BidirectedGraph<string, FileGraphInfo>;
   registryMap: Map<string, { registry: Registry; output: CompiledRegistry }>;
-}
-
-export interface TransformContext extends CompileContext {
   packageJsons: PackageJsonMap;
 }
+
+export type TransformContext = CompileContext;
 
 export async function compile(options: CompileOptions): Promise<CompiledRegistry> {
   const { root } = options;
@@ -107,6 +110,7 @@ export async function compile(options: CompileOptions): Promise<CompiledRegistry
   const ctx: CompileContext = {
     ...options,
     fileGraph: new BidirectedGraph(),
+    packageJsons: await generatePackageJsonMap(root),
     registryMap,
   };
 
@@ -125,8 +129,8 @@ export async function compile(options: CompileOptions): Promise<CompiledRegistry
       info: {
         indexes: [],
         unlistedIndexes: [],
-        env: registry.env,
-        variables: registry.variables,
+        meta: registry.meta,
+        registries: registry.subRegistries?.map((r) => r.name),
       },
       subRegistries: registry.subRegistries?.map(initRegistry),
       components: [],
@@ -154,12 +158,47 @@ export async function compile(options: CompileOptions): Promise<CompiledRegistry
   }
 
   initRegistry(root);
-  const { packageJsons } = await resolveFiles(ctx);
+  await resolveFiles(ctx);
   generateChunks(ctx);
-  writechunks({
-    ...ctx,
-    packageJsons,
-  });
+  writechunks(ctx);
 
   return registryMap.get(root.name)!.output;
+}
+
+// absolute path -> info
+export type PackageJsonMap = Map<string, { data: PackageJson | null; registry: Registry }>;
+
+async function generatePackageJsonMap(root: Registry): Promise<PackageJsonMap> {
+  const packageJsons: PackageJsonMap = new Map();
+  const scanned = new Set<string>();
+
+  async function findRegistryPackageJsons(registry: Registry) {
+    if (scanned.has(registry.name)) return;
+    scanned.add(registry.name);
+    let packageJson: { file: string; content: string } | null;
+
+    if (registry.packageJson) {
+      const filePath = path.resolve(registry.dir, registry.packageJson);
+      packageJson = {
+        file: filePath,
+        content: await fs.readFile(filePath, "utf-8"),
+      };
+    } else {
+      packageJson = await findNearestPackageJson(registry.dir);
+    }
+
+    if (!packageJson)
+      throw new Error(`failed to find the package.json file of registry "${registry.name}"`);
+
+    packageJsons.set(packageJson.file, {
+      data: JSON.parse(packageJson.content),
+      registry,
+    });
+
+    if (registry.subRegistries)
+      await Promise.all(registry.subRegistries.map(findRegistryPackageJsons));
+  }
+
+  await findRegistryPackageJsons(root);
+  return packageJsons;
 }

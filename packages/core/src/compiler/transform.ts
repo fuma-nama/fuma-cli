@@ -1,4 +1,4 @@
-import { encodeImport, getComponentFileId } from "@/registry/protocols/import";
+import { encodeImport, getComponentFileId } from "@/protocols/import";
 import {
   type CompiledComponent,
   type CompiledFile,
@@ -87,6 +87,7 @@ function transformComponent(
       subComponents: Array.from(compCtx.subComponents.values()),
       dependencies: compCtx.dependencies,
       devDependencies: compCtx.devDependencies,
+      meta: component.meta,
     },
     {
       name: component.name,
