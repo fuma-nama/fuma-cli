@@ -5,6 +5,18 @@ description: More details about compiler.
 
 ## Compile Options
 
+You can pass additional options to the `compile()` function.
+
+```ts
+import { compile } from "fuma-cli/compiler";
+import { registry } from "../registry";
+
+const out = await compile({
+  root: registry,
+  // compile options
+});
+```
+
 ### `onUnknownFile`
 
 When component imported a file that is not defined in `files`, this function is called.
@@ -13,10 +25,65 @@ When component imported a file that is not defined in `files`, this function is 
 - Return **`false`** to treat the import as **external** (leave the import statement as-is).
 - Throw error if `undefined`.
 
+<Callout title="Component File Descriptor">
+  The object that describes how the file should be installed.
+</Callout>
+
+```ts
+import { compile } from "fuma-cli/compiler";
+import { registry } from "../registry";
+
+const out = await compile({
+  root: registry,
+  onUnknownFile(absolutePath) {
+    if (absolutePath.endsWith(".css")) return false;
+
+    return {
+      type: "ui",
+      path: absolutePath,
+    };
+  },
+});
+```
+
 ### `isExternal`
 
 Accept a `ref` object. Will keep the import statement as-is if `true` is returned, otherwise continue to resolve the imported file.
 
+```ts
+import { compile } from "fuma-cli/compiler";
+import { registry } from "../registry";
+
+const out = await compile({
+  root: registry,
+  isExternal(ref) {
+    // externalize CSS files
+    if (ref.type === "file" && ref.file.endsWith(".css")) return true;
+
+    return false;
+  },
+});
+```
+
 ### `onParseReference`
 
 Accept a `ref` object, allow you to rewrite the resolved file before further resolution.
+
+```ts
+import { compile } from "fuma-cli/compiler";
+import { registry } from "../registry";
+
+const out = await compile({
+  root: registry,
+  onParseReference(ref) {
+    if (ref.type === "file") {
+      return {
+        ...ref,
+        file: "<my-custom-path>",
+      };
+    }
+
+    return ref;
+  },
+});
+```
