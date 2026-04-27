@@ -20,8 +20,8 @@ Specify the base directory for your registry.
 ```ts title="my-repo/registry.ts"
 import type { Registry } from "fuma-cli/compiler";
 
-// my-repo/src
-const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "./src");
+// my-repo/
+const dir = path.dirname(fileURLToPath(import.meta.url));
 
 export const registry: Registry = {
   name: "acme-ui",
