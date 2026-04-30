@@ -5,6 +5,7 @@ import { parse, type ParseResult } from "oxc-parser";
 import { visitSpecifiers } from "@/utils/ast";
 import { MACRO_PATH } from "@/constants";
 import { ResolverFactory } from "oxc-resolver";
+import { ChunkType, getFileGroupComponentName } from "./chunks";
 
 export type RawReference =
   | {
@@ -52,7 +53,11 @@ export async function resolveFiles(ctx: CompileContext) {
 }
 
 async function resolveFile(filePath: string, oxc: ResolverFactory, ctx: CompileContext) {
-  const { fileGraph, onUnknownFile, _registryPackageJsonPaths, isExternal, onParseReference } = ctx;
+  const {
+    fileGraph,
+    _registryPackageJsonPaths,
+    options: { onUnknownFile, isExternal, onParseReference },
+  } = ctx;
   let node = fileGraph.getVertex(filePath)!;
   if (node.scanned) return;
 
@@ -167,4 +172,42 @@ function getDepFromSpecifier(specifier: string) {
   return specifier.startsWith("@")
     ? specifier.split("/").slice(0, 2).join("/")
     : specifier.split("/")[0];
+}
+
+/** resolve files again after chunk generation */
+export function resolveChunks(ctx: CompileContext) {
+  const {
+    fileGraph,
+    options: { root },
+  } = ctx;
+
+  for (const { data } of fileGraph.values()) {
+    const scanned = data.scanned!;
+
+    if (scanned.type === "ts" && scanned.imports) {
+      for (const [k, meta] of scanned.imports.entries()) {
+        if (meta.type !== "file") continue;
+
+        const importedFile = fileGraph.getVertex(meta.file);
+        if (!importedFile || !importedFile.chunk) continue;
+
+        scanned.imports.set(k, {
+          type: "sub-component",
+          resolved: {
+            type: "local",
+            subRegistry:
+              importedFile.chunk.type === ChunkType.Component &&
+              importedFile.chunk.registry !== root
+                ? importedFile.chunk.registry.name
+                : undefined,
+            component:
+              importedFile.chunk.type === ChunkType.Group
+                ? getFileGroupComponentName(importedFile.chunk)
+                : importedFile.chunk.component.name,
+            file: importedFile.resolved,
+          },
+        });
+      }
+    }
+  }
 }

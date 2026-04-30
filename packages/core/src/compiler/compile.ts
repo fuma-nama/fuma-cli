@@ -4,9 +4,9 @@ import type { CompiledComponent, CompiledFile, registryInfoSchema } from "@/regi
 import type { z } from "zod";
 import type { DistributiveOmit, PackageJson } from "@/types";
 import { BidirectedGraph } from "@/utils/graph";
-import { RawReference, resolveFiles, ScanResult } from "./resolve";
+import { RawReference, resolveChunks, resolveFiles, ScanResult } from "./resolve";
 import { type Chunk, ChunkType, ComponentChunk, generateChunks } from "./chunks";
-import { writeChunks } from "./transform";
+import { TransformFileContext, writeChunks } from "./transform";
 import type { DependenciesConfig } from "./deps";
 import { findNearestPackageJson } from "@/utils/fs";
 
@@ -60,26 +60,26 @@ export interface Registry
   dir: string;
 }
 
-export type Reference =
-  | RawReference
-  | {
-      type: "sub-component";
-      resolved:
-        | {
-            type: "local";
-            subRegistry?: string;
-            component: string;
-            file: ComponentFile;
-          }
-        | {
-            type: "http";
-            registryUrl: string;
-            subRegistry?: string;
-            component: string;
-            /** referenced file id, e.g. the target path of component, or the route of a route handler file */
-            file: string;
-          };
-    };
+export type Reference = RawReference | SubComponentReference;
+
+export interface SubComponentReference {
+  type: "sub-component";
+  resolved:
+    | {
+        type: "local";
+        subRegistry?: string;
+        component: string;
+        file: ComponentFile;
+      }
+    | {
+        type: "http";
+        registryUrl: string;
+        subRegistry?: string;
+        component: string;
+        /** referenced file id, e.g. the target path of component, or the route of a route handler file */
+        file: string;
+      };
+}
 
 export interface CompileOptions {
   root: Registry;
@@ -89,13 +89,22 @@ export interface CompileOptions {
    * @returns file, or `false` to mark as external.
    */
   onUnknownFile?: (absolutePath: string) => ComponentFile | false | undefined;
+
+  beforeTransform?: (
+    content: string,
+    file: string,
+    ctx: TransformFileContext,
+  ) => string | undefined;
+  afterTransform?: (content: string, file: string, ctx: TransformFileContext) => string | undefined;
+
   /**
    * if a reference is marked as external, compiler won't process & transform the import, and the file won't be included into the bundle.
    */
   isExternal?: (ref: RawReference) => boolean;
 }
 
-export interface CompileContext extends CompileOptions {
+export interface CompileContext {
+  options: CompileOptions;
   fileGraph: BidirectedGraph<string, FileGraphInfo>;
   registryMap: Map<string, RegistryInfo>;
 
@@ -114,7 +123,7 @@ export async function compile(options: CompileOptions): Promise<CompiledRegistry
   const { root } = options;
 
   const ctx: CompileContext = {
-    ...options,
+    options,
     fileGraph: new BidirectedGraph(),
     registryMap: new Map(),
     _registryPackageJsonPaths: new Map(),
@@ -185,6 +194,7 @@ export async function compile(options: CompileOptions): Promise<CompiledRegistry
   const rootOutput = await initRegistry(root);
   await resolveFiles(ctx);
   generateChunks(ctx);
+  resolveChunks(ctx);
   writeChunks(ctx);
 
   return rootOutput;

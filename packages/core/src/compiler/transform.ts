@@ -9,7 +9,7 @@ import { transformSpecifiers } from "@/utils/ast";
 import MagicString from "magic-string";
 import z from "zod";
 import type { CompileContext, Component, Reference, Registry } from "./compile";
-import { Chunk, ChunkType, fileGroupToComponent, getFileGroupComponentName } from "./chunks";
+import { Chunk, ChunkType, fileGroupToComponent } from "./chunks";
 import { type DepInfo, resolveDepInfo } from "./deps";
 
 export interface TransformFileContext extends CompileContext {
@@ -21,7 +21,11 @@ export interface TransformFileContext extends CompileContext {
 }
 
 export function writeChunks(ctx: CompileContext) {
-  const { fileGraph, registryMap, root } = ctx;
+  const {
+    fileGraph,
+    registryMap,
+    options: { root },
+  } = ctx;
   const chunkFiles = new Map<Chunk, string[]>();
 
   for (const [file, node] of fileGraph.entries()) {
@@ -170,50 +174,40 @@ function writeReference(reference: Reference, ctx: TransformFileContext) {
 }
 
 function transformFile(file: string, ctx: TransformFileContext): CompiledFile {
-  const { fileGraph, root } = ctx;
+  const {
+    fileGraph,
+    options: { beforeTransform, afterTransform },
+  } = ctx;
   const { scanned, resolved } = fileGraph.getVertex(file)!;
   if (!scanned) throw new Error();
 
-  if (scanned.type === "raw") return { ...resolved, content: scanned.content };
+  if (scanned.type === "raw") {
+    let content = scanned.content;
+    if (beforeTransform) content = beforeTransform(content, file, ctx) ?? content;
+    if (afterTransform) content = afterTransform(content, file, ctx) ?? content;
+    return { ...resolved, content };
+  }
+
   if (scanned.type === "ts") {
-    const { content, imports, ast } = scanned;
+    let { content, imports, ast } = scanned;
+    if (beforeTransform) content = beforeTransform(content, file, ctx) ?? content;
 
     const s = new MagicString(content);
 
     // Process import paths
     if (imports) {
       transformSpecifiers(ast.program, s, (specifier) => {
-        let meta = imports.get(specifier);
-        if (!meta) return;
-
-        if (meta.type === "file") {
-          const data = fileGraph.getVertex(meta.file);
-
-          if (data && data.chunk && data.resolved)
-            meta = {
-              type: "sub-component",
-              resolved: {
-                type: "local",
-                subRegistry:
-                  data.chunk.type === ChunkType.Component && data.chunk.registry !== root
-                    ? data.chunk.registry.name
-                    : undefined,
-                component:
-                  data.chunk.type === ChunkType.Group
-                    ? getFileGroupComponentName(data.chunk)
-                    : data.chunk.component.name,
-                file: data.resolved,
-              },
-            };
-        }
-
-        return writeReference(meta, ctx);
+        const meta = imports.get(specifier);
+        if (meta) return writeReference(meta, ctx);
       });
     }
 
+    content = s.toString();
+    if (afterTransform) content = afterTransform(content, file, ctx) ?? content;
+
     return {
       ...resolved,
-      content: s.toString(),
+      content,
     };
   }
 
