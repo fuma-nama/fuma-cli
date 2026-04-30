@@ -1,5 +1,12 @@
 # @fuma-cli/interactive
 
+## 1.0.0
+
+### Patch Changes
+
+- Updated dependencies [646a031]
+  - fuma-cli@1.0.0
+
 ## 0.0.4
 
 ### Patch Changes
