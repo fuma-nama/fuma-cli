@@ -6,7 +6,7 @@ import type { DistributiveOmit, PackageJson } from "@/types";
 import { BidirectedGraph } from "@/utils/graph";
 import { RawReference, resolveFiles, ScanResult } from "./resolve";
 import { type Chunk, ChunkType, ComponentChunk, generateChunks } from "./chunks";
-import { writechunks } from "./transform";
+import { writeChunks } from "./transform";
 import type { DependenciesConfig } from "./deps";
 import { findNearestPackageJson } from "@/utils/fs";
 
@@ -97,25 +97,31 @@ export interface CompileOptions {
 
 export interface CompileContext extends CompileOptions {
   fileGraph: BidirectedGraph<string, FileGraphInfo>;
-  registryMap: Map<string, { registry: Registry; output: CompiledRegistry }>;
-  packageJsons: PackageJsonMap;
+  registryMap: Map<string, RegistryInfo>;
+
+  /** absolute file path -> registry name */
+  _registryPackageJsonPaths: Map<string, string>;
 }
 
-export type TransformContext = CompileContext;
+interface RegistryInfo {
+  registry: Registry;
+  output: CompiledRegistry;
+  packageJsonPath: string;
+  packageJson: PackageJson;
+}
 
 export async function compile(options: CompileOptions): Promise<CompiledRegistry> {
   const { root } = options;
-  const registryMap = new Map<string, { registry: Registry; output: CompiledRegistry }>();
 
   const ctx: CompileContext = {
     ...options,
     fileGraph: new BidirectedGraph(),
-    packageJsons: await generatePackageJsonMap(root),
-    registryMap,
+    registryMap: new Map(),
+    _registryPackageJsonPaths: new Map(),
   };
 
-  function initRegistry(registry: Registry) {
-    const cached = registryMap.get(registry.name);
+  async function initRegistry(registry: Registry): Promise<CompiledRegistry> {
+    const cached = ctx.registryMap.get(registry.name);
     if (cached) {
       if (cached.registry !== registry)
         throw new Error(
@@ -132,73 +138,54 @@ export async function compile(options: CompileOptions): Promise<CompiledRegistry
         meta: registry.meta,
         registries: registry.subRegistries?.map((r) => r.name),
       },
-      subRegistries: registry.subRegistries?.map(initRegistry),
       components: [],
     };
-    registryMap.set(registry.name, { registry, output });
+    const info: RegistryInfo = {
+      registry,
+      output,
+      packageJsonPath: null as never,
+      packageJson: null as never,
+    };
+    ctx.registryMap.set(registry.name, info);
 
     for (const comp of registry.components) {
       const chunk: ComponentChunk = { type: ChunkType.Component, registry, component: comp };
 
       for (const file of comp.files) {
         const filePath = path.resolve(registry.dir, file.path);
-        const { data } = ctx.fileGraph.addVertex(filePath, { resolved: file });
+        const { data } = ctx.fileGraph.addVertex(filePath, { resolved: file, chunk });
 
-        if (data.chunk && data.chunk !== chunk) {
+        if (data.chunk !== chunk) {
           throw new Error(
             `The same file "${filePath}" must not co-exist in multiple components, detected: ${comp.name} & ${(data.chunk as ComponentChunk).component.name}`,
           );
         }
-
-        data.chunk = chunk;
       }
     }
+
+    if (registry.packageJson) {
+      const filePath = path.resolve(registry.dir, registry.packageJson);
+      info.packageJsonPath = filePath;
+      info.packageJson = JSON.parse(await fs.readFile(filePath, "utf-8"));
+    } else {
+      const resolved = await findNearestPackageJson(registry.dir);
+      if (!resolved)
+        throw new Error(`failed to find the package.json file of registry "${registry.name}"`);
+      info.packageJsonPath = resolved.file;
+      info.packageJson = JSON.parse(resolved.content);
+    }
+
+    ctx._registryPackageJsonPaths.set(info.packageJsonPath, registry.name);
+    if (registry.subRegistries)
+      output.subRegistries = await Promise.all(registry.subRegistries.map(initRegistry));
 
     return output;
   }
 
-  initRegistry(root);
+  const rootOutput = await initRegistry(root);
   await resolveFiles(ctx);
   generateChunks(ctx);
-  writechunks(ctx);
+  writeChunks(ctx);
 
-  return registryMap.get(root.name)!.output;
-}
-
-// absolute path -> info
-export type PackageJsonMap = Map<string, { data: PackageJson | null; registry: Registry }>;
-
-async function generatePackageJsonMap(root: Registry): Promise<PackageJsonMap> {
-  const packageJsons: PackageJsonMap = new Map();
-  const scanned = new Set<string>();
-
-  async function findRegistryPackageJsons(registry: Registry) {
-    if (scanned.has(registry.name)) return;
-    scanned.add(registry.name);
-    let packageJson: { file: string; content: string } | null;
-
-    if (registry.packageJson) {
-      const filePath = path.resolve(registry.dir, registry.packageJson);
-      packageJson = {
-        file: filePath,
-        content: await fs.readFile(filePath, "utf-8"),
-      };
-    } else {
-      packageJson = await findNearestPackageJson(registry.dir);
-    }
-
-    if (!packageJson)
-      throw new Error(`failed to find the package.json file of registry "${registry.name}"`);
-
-    packageJsons.set(packageJson.file, {
-      data: JSON.parse(packageJson.content),
-      registry,
-    });
-
-    if (registry.subRegistries)
-      await Promise.all(registry.subRegistries.map(findRegistryPackageJsons));
-  }
-
-  await findRegistryPackageJsons(root);
-  return packageJsons;
+  return rootOutput;
 }

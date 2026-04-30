@@ -52,10 +52,8 @@ export async function resolveFiles(ctx: CompileContext) {
 }
 
 async function resolveFile(filePath: string, oxc: ResolverFactory, ctx: CompileContext) {
-  const { fileGraph, onUnknownFile, isExternal, onParseReference, packageJsons } = ctx;
-  let node = fileGraph.getVertex(filePath);
-
-  if (!node) throw new Error(`vertex "${filePath}" should exist before resolving`);
+  const { fileGraph, onUnknownFile, _registryPackageJsonPaths, isExternal, onParseReference } = ctx;
+  let node = fileGraph.getVertex(filePath)!;
   if (node.scanned) return;
 
   node.scanned = {
@@ -100,7 +98,7 @@ async function resolveFile(filePath: string, oxc: ResolverFactory, ctx: CompileC
         type: "unknown",
         specifier,
       };
-    } else if (!packageJsons.has(resolvedSpecifier.packageJsonPath)) {
+    } else if (!_registryPackageJsonPaths.has(resolvedSpecifier.packageJsonPath)) {
       // outside of registry dir = dep
       resolved = {
         type: "dependency",

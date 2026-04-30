@@ -8,11 +8,11 @@ import {
 import { transformSpecifiers } from "@/utils/ast";
 import MagicString from "magic-string";
 import z from "zod";
-import type { Component, FileGraphInfo, Reference, Registry, TransformContext } from "./compile";
+import type { CompileContext, Component, Reference, Registry } from "./compile";
 import { Chunk, ChunkType, fileGroupToComponent, getFileGroupComponentName } from "./chunks";
 import { type DepInfo, resolveDepInfo } from "./deps";
 
-export interface CompileComponentContext extends TransformContext {
+export interface TransformFileContext extends CompileContext {
   chunk: Chunk;
   component: Component;
   dependencies: Record<string, string | null>;
@@ -20,7 +20,7 @@ export interface CompileComponentContext extends TransformContext {
   subComponents: Map<string, z.input<typeof subComponentReference>>;
 }
 
-export function writechunks(ctx: TransformContext) {
+export function writeChunks(ctx: CompileContext) {
   const { fileGraph, registryMap, root } = ctx;
   const chunkFiles = new Map<Chunk, string[]>();
 
@@ -56,12 +56,11 @@ function transformComponent(
   registry: Registry,
   chunk: Chunk,
   filePaths: string[],
-  ctx: TransformContext,
+  ctx: CompileContext,
 ): [CompiledComponent, CompiledIndex, unlisted: boolean] {
-  const { fileGraph } = ctx;
   const component =
     chunk.type === ChunkType.Component ? chunk.component : fileGroupToComponent(chunk);
-  const compCtx: CompileComponentContext = {
+  const fileCtx: TransformFileContext = {
     ...ctx,
     chunk,
     component,
@@ -69,14 +68,7 @@ function transformComponent(
     devDependencies: { ...registry.devDependencies, ...component.devDependencies },
     subComponents: new Map(),
   };
-  const files: CompiledFile[] = filePaths.map((file) => {
-    const data = fileGraph.getVertex(file)!;
-
-    return {
-      ...data.resolved,
-      content: transformFile(data, compCtx),
-    };
-  });
+  const files: CompiledFile[] = filePaths.map((file) => transformFile(file, fileCtx));
 
   return [
     {
@@ -84,9 +76,9 @@ function transformComponent(
       title: component.title,
       description: component.description,
       files,
-      subComponents: Array.from(compCtx.subComponents.values()),
-      dependencies: compCtx.dependencies,
-      devDependencies: compCtx.devDependencies,
+      subComponents: Array.from(fileCtx.subComponents.values()),
+      dependencies: fileCtx.dependencies,
+      devDependencies: fileCtx.devDependencies,
       meta: component.meta,
     },
     {
@@ -106,8 +98,8 @@ function hashSubComponentReference(ref: z.input<typeof subComponentReference>): 
   return `http:${ref.registryUrl}:${ref.subRegistry ?? ""}:${ref.component}`;
 }
 
-function writeReference(reference: Reference, ctx: CompileComponentContext) {
-  const { fileGraph, chunk, packageJsons, subComponents } = ctx;
+function writeReference(reference: Reference, ctx: TransformFileContext) {
+  const { fileGraph, chunk, registryMap, subComponents } = ctx;
 
   if (reference.type === "unknown") {
     console.warn(`Unknown specifier ${reference.specifier}, skipping for now`);
@@ -163,12 +155,8 @@ function writeReference(reference: Reference, ctx: CompileComponentContext) {
   if (chunk.type === ChunkType.Component) {
     let depInfo: DepInfo | undefined;
 
-    for (const v of packageJsons.values()) {
-      if (v.registry === chunk.registry) {
-        if (v.data) depInfo = resolveDepInfo(reference.dep, v.data);
-        break;
-      }
-    }
+    const r = registryMap.get(chunk.registry.name)!;
+    depInfo = resolveDepInfo(reference.dep, r.packageJson);
 
     if (depInfo) {
       const map = depInfo.type === "dev" ? ctx.devDependencies : ctx.dependencies;
@@ -181,45 +169,53 @@ function writeReference(reference: Reference, ctx: CompileComponentContext) {
   return reference.specifier;
 }
 
-function transformFile(data: FileGraphInfo, ctx: CompileComponentContext): string {
+function transformFile(file: string, ctx: TransformFileContext): CompiledFile {
   const { fileGraph, root } = ctx;
-  const scanned = data.scanned!;
-  if (scanned.type === "raw") return scanned.content;
-  if (scanned.type === "resolving") throw new Error("impossible");
-  const { content, imports, ast } = scanned;
+  const { scanned, resolved } = fileGraph.getVertex(file)!;
+  if (!scanned) throw new Error();
 
-  const s = new MagicString(content);
+  if (scanned.type === "raw") return { ...resolved, content: scanned.content };
+  if (scanned.type === "ts") {
+    const { content, imports, ast } = scanned;
 
-  // Process import paths
-  if (imports) {
-    transformSpecifiers(ast.program, s, (specifier) => {
-      let meta: Reference | undefined = imports.get(specifier);
-      if (!meta) return;
+    const s = new MagicString(content);
 
-      if (meta.type === "file") {
-        const data = fileGraph.getVertex(meta.file);
+    // Process import paths
+    if (imports) {
+      transformSpecifiers(ast.program, s, (specifier) => {
+        let meta = imports.get(specifier);
+        if (!meta) return;
 
-        if (data && data.chunk && data.resolved)
-          meta = {
-            type: "sub-component",
-            resolved: {
-              type: "local",
-              subRegistry:
-                data.chunk.type === ChunkType.Component && data.chunk.registry !== root
-                  ? data.chunk.registry.name
-                  : undefined,
-              component:
-                data.chunk.type === ChunkType.Group
-                  ? getFileGroupComponentName(data.chunk)
-                  : data.chunk.component.name,
-              file: data.resolved,
-            },
-          };
-      }
+        if (meta.type === "file") {
+          const data = fileGraph.getVertex(meta.file);
 
-      return writeReference(meta, ctx);
-    });
+          if (data && data.chunk && data.resolved)
+            meta = {
+              type: "sub-component",
+              resolved: {
+                type: "local",
+                subRegistry:
+                  data.chunk.type === ChunkType.Component && data.chunk.registry !== root
+                    ? data.chunk.registry.name
+                    : undefined,
+                component:
+                  data.chunk.type === ChunkType.Group
+                    ? getFileGroupComponentName(data.chunk)
+                    : data.chunk.component.name,
+                file: data.resolved,
+              },
+            };
+        }
+
+        return writeReference(meta, ctx);
+      });
+    }
+
+    return {
+      ...resolved,
+      content: s.toString(),
+    };
   }
 
-  return s.toString();
+  throw new Error(`unexpected file type: ${scanned.type}`);
 }
