@@ -1,5 +1,11 @@
 # fuma-cli
 
+## 0.1.0
+
+### Minor Changes
+
+- 646a031: Support hooks for transformations during compilation
+
 ## 0.0.6
 
 ### Patch Changes
