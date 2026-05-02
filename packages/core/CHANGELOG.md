@@ -1,5 +1,11 @@
 # fuma-cli
 
+## 0.1.1
+
+### Patch Changes
+
+- 7317f03: Fix empty chunks not generated
+
 ## 0.1.0
 
 ### Minor Changes
