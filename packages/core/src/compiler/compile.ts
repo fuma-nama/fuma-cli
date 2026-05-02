@@ -1,6 +1,11 @@
 import path from "node:path";
 import fs from "node:fs/promises";
-import type { CompiledComponent, CompiledFile, registryInfoSchema } from "@/registry/schema";
+import type {
+  CompiledComponent,
+  CompiledFile,
+  registryInfoSchema,
+  subComponentReference,
+} from "@/registry/schema";
 import type { z } from "zod";
 import type { DistributiveOmit, PackageJson } from "@/types";
 import { BidirectedGraph } from "@/utils/graph";
@@ -33,7 +38,8 @@ export interface Component extends DependenciesConfig {
   name: string;
   title?: string;
   description?: string;
-  files: ComponentFile[];
+  files?: ComponentFile[];
+  subComponents?: z.input<typeof subComponentReference>[];
 
   /**
    * Don't list the component in registry index file
@@ -106,6 +112,7 @@ export interface CompileOptions {
 export interface CompileContext {
   options: CompileOptions;
   fileGraph: BidirectedGraph<string, FileGraphInfo>;
+  chunks: Set<Chunk>;
   registryMap: Map<string, RegistryInfo>;
 
   /** absolute file path -> registry name */
@@ -126,6 +133,7 @@ export async function compile(options: CompileOptions): Promise<CompiledRegistry
     options,
     fileGraph: new BidirectedGraph(),
     registryMap: new Map(),
+    chunks: new Set(),
     _registryPackageJsonPaths: new Map(),
   };
 
@@ -159,6 +167,8 @@ export async function compile(options: CompileOptions): Promise<CompiledRegistry
 
     for (const comp of registry.components) {
       const chunk: ComponentChunk = { type: ChunkType.Component, registry, component: comp };
+      ctx.chunks.add(chunk);
+      if (!comp.files) continue;
 
       for (const file of comp.files) {
         const filePath = path.resolve(registry.dir, file.path);

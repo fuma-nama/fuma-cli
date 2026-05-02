@@ -5,7 +5,7 @@ import { parse, type ParseResult } from "oxc-parser";
 import { visitSpecifiers } from "@/utils/ast";
 import { MACRO_PATH } from "@/constants";
 import { ResolverFactory } from "oxc-resolver";
-import { ChunkType, getFileGroupComponentName } from "./chunks";
+import { ChunkType } from "./chunks";
 
 export type RawReference =
   | {
@@ -52,6 +52,13 @@ export async function resolveFiles(ctx: CompileContext) {
   await Promise.all(Array.from(fileGraph.vertices()).map((file) => resolveFile(file, oxc, ctx)));
 }
 
+const AST_TYPES: Record<string, "js" | "ts" | undefined> = {
+  ".ts": "ts",
+  ".tsx": "ts",
+  ".js": "js",
+  ".jsx": "js",
+};
+
 async function resolveFile(filePath: string, oxc: ResolverFactory, ctx: CompileContext) {
   const {
     fileGraph,
@@ -65,13 +72,7 @@ async function resolveFile(filePath: string, oxc: ResolverFactory, ctx: CompileC
     type: "resolving",
   };
 
-  const astTypes: Record<string, "js" | "ts" | undefined> = {
-    ".ts": "ts",
-    ".tsx": "ts",
-    ".js": "js",
-    ".jsx": "js",
-  };
-  const astType = astTypes[path.extname(filePath)];
+  const astType = AST_TYPES[path.extname(filePath)];
   const content = node.resolved.content ?? (await fs.readFile(filePath, "utf-8"));
 
   if (!astType) {
@@ -107,7 +108,7 @@ async function resolveFile(filePath: string, oxc: ResolverFactory, ctx: CompileC
       // outside of registry dir = dep
       resolved = {
         type: "dependency",
-        dep: getDepFromSpecifier(specifier)!,
+        dep: getDepFromSpecifier(specifier),
         specifier,
       };
     } else {
@@ -202,7 +203,7 @@ export function resolveChunks(ctx: CompileContext) {
                 : undefined,
             component:
               importedFile.chunk.type === ChunkType.Group
-                ? getFileGroupComponentName(importedFile.chunk)
+                ? importedFile.chunk.componentName
                 : importedFile.chunk.component.name,
             file: importedFile.resolved,
           },

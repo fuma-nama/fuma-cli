@@ -1,15 +1,15 @@
 import { encodeImport, getComponentFileId } from "@/protocols/import";
-import {
-  type CompiledComponent,
-  type CompiledFile,
-  type CompiledIndex,
+import type {
+  CompiledComponent,
+  CompiledFile,
+  CompiledIndex,
   subComponentReference,
 } from "@/registry/schema";
 import { transformSpecifiers } from "@/utils/ast";
 import MagicString from "magic-string";
 import z from "zod";
 import type { CompileContext, Component, Reference, Registry } from "./compile";
-import { Chunk, ChunkType, fileGroupToComponent } from "./chunks";
+import { Chunk, ChunkType } from "./chunks";
 import { type DepInfo, resolveDepInfo } from "./deps";
 
 export interface TransformFileContext extends CompileContext {
@@ -24,21 +24,16 @@ export function writeChunks(ctx: CompileContext) {
   const {
     fileGraph,
     registryMap,
+    chunks,
     options: { root },
   } = ctx;
   const chunkFiles = new Map<Chunk, string[]>();
+  for (const chunk of chunks) {
+    chunkFiles.set(chunk, []);
+  }
 
   for (const [file, node] of fileGraph.entries()) {
-    const chunk = node.data.chunk;
-    if (!chunk) throw new Error(`file "${file}" has no aligned chunk`);
-
-    let list = chunkFiles.get(chunk);
-    if (!list) {
-      list = [];
-      chunkFiles.set(chunk, list);
-    }
-
-    list.push(file);
+    chunkFiles.get(node.data.chunk!)!.push(file);
   }
 
   for (const [chunk, files] of chunkFiles.entries()) {
@@ -63,7 +58,13 @@ function transformComponent(
   ctx: CompileContext,
 ): [CompiledComponent, CompiledIndex, unlisted: boolean] {
   const component =
-    chunk.type === ChunkType.Component ? chunk.component : fileGroupToComponent(chunk);
+    chunk.type === ChunkType.Component
+      ? chunk.component
+      : {
+          name: chunk.componentName,
+          files: [],
+          unlisted: true,
+        };
   const fileCtx: TransformFileContext = {
     ...ctx,
     chunk,
@@ -72,7 +73,12 @@ function transformComponent(
     devDependencies: { ...registry.devDependencies, ...component.devDependencies },
     subComponents: new Map(),
   };
-  const files: CompiledFile[] = filePaths.map((file) => transformFile(file, fileCtx));
+  const files = filePaths.map((file) => transformFile(file, fileCtx));
+  if (component.subComponents) {
+    for (const v of component.subComponents) {
+      fileCtx.subComponents.set(hashSubComponentReference(v), v);
+    }
+  }
 
   return [
     {
