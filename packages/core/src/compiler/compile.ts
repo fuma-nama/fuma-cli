@@ -1,12 +1,17 @@
 import path from "node:path";
 import fs from "node:fs/promises";
-import type { CompiledComponent, CompiledFile, registryInfoSchema } from "@/registry/schema";
+import type {
+  CompiledComponent,
+  CompiledFile,
+  registryInfoSchema,
+  subComponentReference,
+} from "@/registry/schema";
 import type { z } from "zod";
 import type { DistributiveOmit, PackageJson } from "@/types";
 import { BidirectedGraph } from "@/utils/graph";
-import { RawReference, resolveFiles, ScanResult } from "./resolve";
+import { RawReference, resolveChunks, resolveFiles, ScanResult } from "./resolve";
 import { type Chunk, ChunkType, ComponentChunk, generateChunks } from "./chunks";
-import { writechunks } from "./transform";
+import { TransformFileContext, writeChunks } from "./transform";
 import type { DependenciesConfig } from "./deps";
 import { findNearestPackageJson } from "@/utils/fs";
 
@@ -33,7 +38,8 @@ export interface Component extends DependenciesConfig {
   name: string;
   title?: string;
   description?: string;
-  files: ComponentFile[];
+  files?: ComponentFile[];
+  subComponents?: z.input<typeof subComponentReference>[];
 
   /**
    * Don't list the component in registry index file
@@ -60,26 +66,26 @@ export interface Registry
   dir: string;
 }
 
-export type Reference =
-  | RawReference
-  | {
-      type: "sub-component";
-      resolved:
-        | {
-            type: "local";
-            subRegistry?: string;
-            component: string;
-            file: ComponentFile;
-          }
-        | {
-            type: "http";
-            registryUrl: string;
-            subRegistry?: string;
-            component: string;
-            /** referenced file id, e.g. the target path of component, or the route of a route handler file */
-            file: string;
-          };
-    };
+export type Reference = RawReference | SubComponentReference;
+
+export interface SubComponentReference {
+  type: "sub-component";
+  resolved:
+    | {
+        type: "local";
+        subRegistry?: string;
+        component: string;
+        file: ComponentFile;
+      }
+    | {
+        type: "http";
+        registryUrl: string;
+        subRegistry?: string;
+        component: string;
+        /** referenced file id, e.g. the target path of component, or the route of a route handler file */
+        file: string;
+      };
+}
 
 export interface CompileOptions {
   root: Registry;
@@ -89,33 +95,50 @@ export interface CompileOptions {
    * @returns file, or `false` to mark as external.
    */
   onUnknownFile?: (absolutePath: string) => ComponentFile | false | undefined;
+
+  beforeTransform?: (
+    content: string,
+    file: string,
+    ctx: TransformFileContext,
+  ) => string | undefined;
+  afterTransform?: (content: string, file: string, ctx: TransformFileContext) => string | undefined;
+
   /**
    * if a reference is marked as external, compiler won't process & transform the import, and the file won't be included into the bundle.
    */
   isExternal?: (ref: RawReference) => boolean;
 }
 
-export interface CompileContext extends CompileOptions {
+export interface CompileContext {
+  options: CompileOptions;
   fileGraph: BidirectedGraph<string, FileGraphInfo>;
-  registryMap: Map<string, { registry: Registry; output: CompiledRegistry }>;
-  packageJsons: PackageJsonMap;
+  chunks: Set<Chunk>;
+  registryMap: Map<string, RegistryInfo>;
+
+  /** absolute file path -> registry name */
+  _registryPackageJsonPaths: Map<string, string>;
 }
 
-export type TransformContext = CompileContext;
+interface RegistryInfo {
+  registry: Registry;
+  output: CompiledRegistry;
+  packageJsonPath: string;
+  packageJson: PackageJson;
+}
 
 export async function compile(options: CompileOptions): Promise<CompiledRegistry> {
   const { root } = options;
-  const registryMap = new Map<string, { registry: Registry; output: CompiledRegistry }>();
 
   const ctx: CompileContext = {
-    ...options,
+    options,
     fileGraph: new BidirectedGraph(),
-    packageJsons: await generatePackageJsonMap(root),
-    registryMap,
+    registryMap: new Map(),
+    chunks: new Set(),
+    _registryPackageJsonPaths: new Map(),
   };
 
-  function initRegistry(registry: Registry) {
-    const cached = registryMap.get(registry.name);
+  async function initRegistry(registry: Registry): Promise<CompiledRegistry> {
+    const cached = ctx.registryMap.get(registry.name);
     if (cached) {
       if (cached.registry !== registry)
         throw new Error(
@@ -132,73 +155,57 @@ export async function compile(options: CompileOptions): Promise<CompiledRegistry
         meta: registry.meta,
         registries: registry.subRegistries?.map((r) => r.name),
       },
-      subRegistries: registry.subRegistries?.map(initRegistry),
       components: [],
     };
-    registryMap.set(registry.name, { registry, output });
+    const info: RegistryInfo = {
+      registry,
+      output,
+      packageJsonPath: null as never,
+      packageJson: null as never,
+    };
+    ctx.registryMap.set(registry.name, info);
 
     for (const comp of registry.components) {
       const chunk: ComponentChunk = { type: ChunkType.Component, registry, component: comp };
+      ctx.chunks.add(chunk);
+      if (!comp.files) continue;
 
       for (const file of comp.files) {
         const filePath = path.resolve(registry.dir, file.path);
-        const { data } = ctx.fileGraph.addVertex(filePath, { resolved: file });
+        const { data } = ctx.fileGraph.addVertex(filePath, { resolved: file, chunk });
 
-        if (data.chunk && data.chunk !== chunk) {
+        if (data.chunk !== chunk) {
           throw new Error(
             `The same file "${filePath}" must not co-exist in multiple components, detected: ${comp.name} & ${(data.chunk as ComponentChunk).component.name}`,
           );
         }
-
-        data.chunk = chunk;
       }
     }
+
+    if (registry.packageJson) {
+      const filePath = path.resolve(registry.dir, registry.packageJson);
+      info.packageJsonPath = filePath;
+      info.packageJson = JSON.parse(await fs.readFile(filePath, "utf-8"));
+    } else {
+      const resolved = await findNearestPackageJson(registry.dir);
+      if (!resolved)
+        throw new Error(`failed to find the package.json file of registry "${registry.name}"`);
+      info.packageJsonPath = resolved.file;
+      info.packageJson = JSON.parse(resolved.content);
+    }
+
+    ctx._registryPackageJsonPaths.set(info.packageJsonPath, registry.name);
+    if (registry.subRegistries)
+      output.subRegistries = await Promise.all(registry.subRegistries.map(initRegistry));
 
     return output;
   }
 
-  initRegistry(root);
+  const rootOutput = await initRegistry(root);
   await resolveFiles(ctx);
   generateChunks(ctx);
-  writechunks(ctx);
+  resolveChunks(ctx);
+  writeChunks(ctx);
 
-  return registryMap.get(root.name)!.output;
-}
-
-// absolute path -> info
-export type PackageJsonMap = Map<string, { data: PackageJson | null; registry: Registry }>;
-
-async function generatePackageJsonMap(root: Registry): Promise<PackageJsonMap> {
-  const packageJsons: PackageJsonMap = new Map();
-  const scanned = new Set<string>();
-
-  async function findRegistryPackageJsons(registry: Registry) {
-    if (scanned.has(registry.name)) return;
-    scanned.add(registry.name);
-    let packageJson: { file: string; content: string } | null;
-
-    if (registry.packageJson) {
-      const filePath = path.resolve(registry.dir, registry.packageJson);
-      packageJson = {
-        file: filePath,
-        content: await fs.readFile(filePath, "utf-8"),
-      };
-    } else {
-      packageJson = await findNearestPackageJson(registry.dir);
-    }
-
-    if (!packageJson)
-      throw new Error(`failed to find the package.json file of registry "${registry.name}"`);
-
-    packageJsons.set(packageJson.file, {
-      data: JSON.parse(packageJson.content),
-      registry,
-    });
-
-    if (registry.subRegistries)
-      await Promise.all(registry.subRegistries.map(findRegistryPackageJsons));
-  }
-
-  await findRegistryPackageJsons(root);
-  return packageJsons;
+  return rootOutput;
 }

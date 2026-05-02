@@ -10,6 +10,7 @@ export type Chunk = GroupChunk | ComponentChunk;
 export interface GroupChunk {
   type: ChunkType.Group;
   id: string;
+  componentName: string;
 }
 
 export interface ComponentChunk {
@@ -57,7 +58,9 @@ export function generateChunks(ctx: CompileContext) {
           data.chunk = {
             type: ChunkType.Group,
             id: chunkId,
+            componentName: `chunks/${chunkId}`,
           };
+          ctx.chunks.add(data.chunk);
         }
       }
     }
@@ -89,16 +92,4 @@ function generateGroupId(components: ComponentChunk[]) {
 
   segments.sort();
   return segments.join("+");
-}
-
-export function getFileGroupComponentName(group: GroupChunk): string {
-  return `chunks/${group.id}`;
-}
-
-export function fileGroupToComponent(group: GroupChunk): Component {
-  return {
-    name: getFileGroupComponentName(group),
-    files: [],
-    unlisted: true,
-  };
 }

@@ -81,6 +81,10 @@ export class BidirectedGraph<K, V> {
     yield* this.nodes.keys();
   }
 
+  values() {
+    return this.nodes.values();
+  }
+
   entries() {
     return this.nodes.entries();
   }

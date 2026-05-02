@@ -5,6 +5,7 @@ import { parse, type ParseResult } from "oxc-parser";
 import { visitSpecifiers } from "@/utils/ast";
 import { MACRO_PATH } from "@/constants";
 import { ResolverFactory } from "oxc-resolver";
+import { ChunkType } from "./chunks";
 
 export type RawReference =
   | {
@@ -51,24 +52,27 @@ export async function resolveFiles(ctx: CompileContext) {
   await Promise.all(Array.from(fileGraph.vertices()).map((file) => resolveFile(file, oxc, ctx)));
 }
 
-async function resolveFile(filePath: string, oxc: ResolverFactory, ctx: CompileContext) {
-  const { fileGraph, onUnknownFile, isExternal, onParseReference, packageJsons } = ctx;
-  let node = fileGraph.getVertex(filePath);
+const AST_TYPES: Record<string, "js" | "ts" | undefined> = {
+  ".ts": "ts",
+  ".tsx": "ts",
+  ".js": "js",
+  ".jsx": "js",
+};
 
-  if (!node) throw new Error(`vertex "${filePath}" should exist before resolving`);
+async function resolveFile(filePath: string, oxc: ResolverFactory, ctx: CompileContext) {
+  const {
+    fileGraph,
+    _registryPackageJsonPaths,
+    options: { onUnknownFile, isExternal, onParseReference },
+  } = ctx;
+  let node = fileGraph.getVertex(filePath)!;
   if (node.scanned) return;
 
   node.scanned = {
     type: "resolving",
   };
 
-  const astTypes: Record<string, "js" | "ts" | undefined> = {
-    ".ts": "ts",
-    ".tsx": "ts",
-    ".js": "js",
-    ".jsx": "js",
-  };
-  const astType = astTypes[path.extname(filePath)];
+  const astType = AST_TYPES[path.extname(filePath)];
   const content = node.resolved.content ?? (await fs.readFile(filePath, "utf-8"));
 
   if (!astType) {
@@ -100,11 +104,11 @@ async function resolveFile(filePath: string, oxc: ResolverFactory, ctx: CompileC
         type: "unknown",
         specifier,
       };
-    } else if (!packageJsons.has(resolvedSpecifier.packageJsonPath)) {
+    } else if (!_registryPackageJsonPaths.has(resolvedSpecifier.packageJsonPath)) {
       // outside of registry dir = dep
       resolved = {
         type: "dependency",
-        dep: getDepFromSpecifier(specifier)!,
+        dep: getDepFromSpecifier(specifier),
         specifier,
       };
     } else {
@@ -169,4 +173,42 @@ function getDepFromSpecifier(specifier: string) {
   return specifier.startsWith("@")
     ? specifier.split("/").slice(0, 2).join("/")
     : specifier.split("/")[0];
+}
+
+/** resolve files again after chunk generation */
+export function resolveChunks(ctx: CompileContext) {
+  const {
+    fileGraph,
+    options: { root },
+  } = ctx;
+
+  for (const { data } of fileGraph.values()) {
+    const scanned = data.scanned!;
+
+    if (scanned.type === "ts" && scanned.imports) {
+      for (const [k, meta] of scanned.imports.entries()) {
+        if (meta.type !== "file") continue;
+
+        const importedFile = fileGraph.getVertex(meta.file);
+        if (!importedFile || !importedFile.chunk) continue;
+
+        scanned.imports.set(k, {
+          type: "sub-component",
+          resolved: {
+            type: "local",
+            subRegistry:
+              importedFile.chunk.type === ChunkType.Component &&
+              importedFile.chunk.registry !== root
+                ? importedFile.chunk.registry.name
+                : undefined,
+            component:
+              importedFile.chunk.type === ChunkType.Group
+                ? importedFile.chunk.componentName
+                : importedFile.chunk.component.name,
+            file: importedFile.resolved,
+          },
+        });
+      }
+    }
+  }
 }
