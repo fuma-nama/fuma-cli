@@ -87,3 +87,45 @@ const out = await compile({
   },
 });
 ```
+
+### `beforeTransform`
+
+Accept file content, absolute file path and a context object. The returned string will be used as content before the default file transformation.
+
+- Return **`undefined`** to keep the original content.
+- Return a **string** to replace the content.
+
+```ts
+import { compile } from "fuma-cli/compiler";
+import { registry } from "../registry";
+
+const out = await compile({
+  root: registry,
+  beforeTransform(content, file, ctx) {
+    if (!file.endsWith(".tsx")) return;
+
+    return content.replaceAll("@/components", "@/registry/components");
+  },
+});
+```
+
+### `afterTransform`
+
+Accept file content, absolute file path and a context object. The returned string will be used as content after the default file transformation.
+
+- Return **`undefined`** to keep the transformed content.
+- Return a **string** to replace the content.
+
+```ts
+import { compile } from "fuma-cli/compiler";
+import { registry } from "../registry";
+
+const out = await compile({
+  root: registry,
+  afterTransform(content, file, ctx) {
+    if (ctx.component.name !== "button") return;
+
+    return `/* generated code */\n${content}`;
+  },
+});
+```
