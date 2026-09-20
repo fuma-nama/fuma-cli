@@ -64,7 +64,7 @@ registry/
 - An import with `package` is a [preserved](/compiler/sidecar#preserve) one, the file content already contains the package specifier.
 - `stmtInfos` is defined for tree-shaken files, see [below](#statement-info).
 - The manifest has everything needed to link, file contents are only downloaded for files that get installed. Binary files are served as-is.
-- The schema is exported from `fuma-cli/registry/schema`.
+- The types and `assertManifest()` are exported from `fuma-cli/registry/schema`. The validator is generated from the types at build time by [typia](https://typia.io), so it has no runtime dependency.
 
 ### Statement Info
 

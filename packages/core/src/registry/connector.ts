@@ -1,6 +1,6 @@
 import path from "node:path";
 import fs from "node:fs/promises";
-import { type Manifest, manifestSchema } from "@/registry/schema";
+import { assertManifest, type Manifest } from "@/registry/schema";
 
 export interface RegistryConnector {
   /** @param registry - name of sub registry, the root registry if omitted */
@@ -20,7 +20,7 @@ export class HttpRegistryConnector implements RegistryConnector {
 
   async fetchManifest(registry?: string) {
     const res = await this.fetch("_registry.json", registry);
-    return manifestSchema.parse(await res.json());
+    return assertManifest(await res.json());
   }
 
   async fetchFile(file: string, registry?: string) {
@@ -34,7 +34,7 @@ export class LocalRegistryConnector implements RegistryConnector {
 
   async fetchManifest(registry = "") {
     const file = path.join(this.dir, registry, "_registry.json");
-    return manifestSchema.parse(JSON.parse(await fs.readFile(file, "utf-8")));
+    return assertManifest(JSON.parse(await fs.readFile(file, "utf-8")));
   }
 
   fetchFile(file: string, registry = "") {
