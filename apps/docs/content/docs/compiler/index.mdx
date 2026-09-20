@@ -5,7 +5,7 @@ description: Configure the registries to compile.
 
 ## Overview
 
-A registry is a directory of source files that belongs to a package. `compile()` scans it for [sidecars](/compiler/sidecar), follows the imports of each installable file, and returns the output in memory.
+A registry is a directory of source files that belongs to a package. It is configured like a bundler: `components` are the entries, and `files` are the rules for installing them.
 
 ```ts
 import { compile, writeRegistry } from "fuma-cli/compiler";
@@ -14,23 +14,77 @@ const out = await compile({
   root: {
     name: "acme-ui",
     dir: "packages/ui/src",
+    components: {
+      button: "button.tsx",
+    },
+    files: {
+      "button.tsx": { type: "ui" },
+      "utils/*": { type: "lib" },
+    },
   },
 });
 
 await writeRegistry(out, { dir: "public/registry" });
 ```
 
+`compile()` starts from the entries, follows the imports of each installed file, and returns the output in memory.
+
 ## Options
 
-| Option          | Description                                                               |
-| --------------- | ------------------------------------------------------------------------- |
-| `name`          | Unique name, it prefixes file IDs like `acme-ui:button.tsx`.              |
-| `dir`           | The directory to scan for sidecars. File paths are relative to it.        |
-| `entries`       | Source files of package exports, see [below](#entries).                   |
-| `files`         | Install info of files without a sidecar, see [below](#files).             |
-| `external`      | Paths the consumer is expected to own, imports of them are kept as-is.    |
-| `dependencies`  | Override the version of dependencies, `null` for the latest.              |
-| `subRegistries` | Registries compiled together, files can reference each other across them. |
+| Option          | Description                                                                          |
+| --------------- | ------------------------------------------------------------------------------------ |
+| `name`          | Unique name, it prefixes file IDs like `acme-ui:button.tsx`.                         |
+| `dir`           | The source directory, file paths are relative to it.                                 |
+| `components`    | What consumers can install, see [below](#components).                                |
+| `files`         | Glob pattern to the rule for installing matched files, see [Files](/compiler/files). |
+| `entries`       | Source files of package exports, see [below](#entries).                              |
+| `external`      | Paths the consumer is expected to own, imports of them are kept as-is.               |
+| `dependencies`  | Override the version of dependencies, `null` for the latest.                         |
+| `subRegistries` | Registries compiled together, files can reference each other across them.            |
+
+### `components`
+
+A component is a named list of entry files. Files imported by an entry are installed along, they don't need to be listed.
+
+```ts
+const registry: Registry = {
+  name: "acme-ui",
+  dir: "src",
+  components: {
+    // one entry
+    card: "card/index.tsx",
+    // multiple entries
+    form: ["form/input.tsx", "form/select.tsx"],
+    // with info
+    button: { title: "Button", description: "A clickable button", entry: "button.tsx" },
+  },
+  files: {
+    "**": { type: "components", target: "<dir>/*" },
+  },
+};
+```
+
+| Field         | Description                                   |
+| ------------- | --------------------------------------------- |
+| `entry`       | Entry files, relative to `dir`.               |
+| `title`       | Display name.                                 |
+| `description` | Short description.                            |
+| `unlisted`    | Hide from component lists, still installable. |
+
+- Every entry must match a rule in [`files`](/compiler/files), otherwise the compilation fails.
+- A file can be an entry of multiple components. To offer several components as one, like `all`, list all their entries.
+
+Entries can be generated, a single rule covers all of them:
+
+```ts
+import path from "node:path";
+import { glob } from "tinyglobby";
+
+const components: Registry["components"] = {};
+for (const file of await glob("icons/*.tsx", { cwd: "src" })) {
+  components[path.basename(file, ".tsx")] = file;
+}
+```
 
 ### `entries`
 
@@ -54,20 +108,6 @@ const registry: Registry = {
     "./button": "components/button.tsx",
   },
 };
-```
-
-### `files`
-
-The same info as a sidecar, keyed by file path. Useful when it can be generated:
-
-```ts
-import { glob } from "tinyglobby";
-import type { Registry } from "fuma-cli/compiler";
-
-const files: Registry["files"] = {};
-for (const file of await glob("icons/*.tsx", { cwd: "src" })) {
-  files[file] = { type: "components", target: `<dir>/${file}` };
-}
 ```
 
 ### `external`

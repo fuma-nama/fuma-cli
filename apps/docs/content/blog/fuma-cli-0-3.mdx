@@ -1,0 +1,43 @@
+---
+title: Fuma CLI 0.3
+description: Entries & rules at config level.
+date: 2026-09-21
+authors: [fuma]
+tags: [release]
+---
+
+## Entries & Rules
+
+A registry has two parts: [`components`](/compiler#components) are the entries, and [`files`](/compiler/files) are glob rules for installing files.
+
+```ts
+const registry: Registry = {
+  name: "acme-ui",
+  dir: "src",
+  components: {
+    button: { title: "Button", entry: "button.tsx" },
+    card: "card/index.tsx",
+  },
+  files: {
+    "button.tsx": { type: "ui" },
+    "utils/*": { type: "lib" },
+    "card/**": { type: "components", target: "<dir>/card/*" },
+  },
+};
+```
+
+- The compiler starts from the entries, and follows the imports of each file. Imported files are installed by the rule they match.
+- The location of a file only depends on its own path, never on the file importing it.
+- `preserve`, `treeshake` and `alias` are options of a rule.
+- It is plain data: registries with the same structure can share a function.
+
+The registry of Fumadocs UI went from 55 sidecars per package to ~25 entries and 13 rules, shared by both packages.
+
+## Unchanged
+
+The output format, installer and plugins are the same as 0.2. A registry compiled by 0.2 can be installed by 0.3, and vice versa.
+
+## Stricter
+
+- An imported package that is not a dependency fails the compilation, it was a warning. This catches path aliases of files [excluded by `tsconfig.json`](/compiler/imports#resolution).
+- Node.js built-ins imported without `node:` are skipped.
