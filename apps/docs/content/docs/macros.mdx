@@ -40,16 +40,23 @@ Avoid naming the parameters `args` or `ctx`.
 
 </Callout>
 
-Describe the route in its sidecar:
+Describe the route in its [rule](/compiler/files), and add the file to a component:
 
-```ts title="src/post-route.install.ts"
-import { defineInstall } from "fuma-cli/compiler";
-
-export default defineInstall({
-  type: "route-handler",
-  route: "api/posts/[id]", // see below for correct format
-  component: "my-component",
-});
+```ts
+const registry: Registry = {
+  name: "acme-ui",
+  dir: "src",
+  components: {
+    posts: ["posts.tsx", "post-route.ts"],
+  },
+  files: {
+    "post-route.ts": {
+      type: "route-handler",
+      route: "api/posts/[id]", // see below for correct format
+    },
+    "posts.tsx": { type: "components" },
+  },
+};
 ```
 
 The `route` field defines the actual route to handle requests, its format is same as Next.js App Router (without the extra `route.ts`).

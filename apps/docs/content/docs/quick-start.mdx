@@ -11,37 +11,9 @@ description: Getting started with Fuma CLI.
 npm i fuma-cli
 ```
 
-### Add Sidecars [step]
-
-A sidecar is a `<name>.install.ts` file next to the file it describes.
-
-```ts title="src/button.install.ts"
-import { defineInstall } from "fuma-cli/compiler";
-
-export default defineInstall({
-  // `type` specifies where the file is installed
-  type: "ui",
-  // the component that consumers install
-  component: { name: "button", title: "Button" },
-});
-```
-
-Files imported by `button.tsx` don't need to join the component, they are installed along:
-
-```ts title="src/utils/cn.install.ts"
-import { defineInstall } from "fuma-cli/compiler";
-
-export default defineInstall({ type: "lib" });
-```
-
-See [Sidecar](/compiler/sidecar) for all options.
-
-<Callout title="Exclude sidecars from your build">
-  Sidecars are only read by the compiler, make sure your bundler & package `files` ignore
-  `*.install.ts`.
-</Callout>
-
 ### Compile [step]
+
+Like a bundler config, a registry has entries and rules:
 
 ```ts title="scripts/compile.ts"
 import { compile, writeRegistry } from "fuma-cli/compiler";
@@ -49,8 +21,18 @@ import { compile, writeRegistry } from "fuma-cli/compiler";
 const out = await compile({
   root: {
     name: "acme-ui",
-    // scanned for sidecars
+    // paths below are relative to it
     dir: "src",
+    // what consumers install: name -> entry file
+    components: {
+      button: { title: "Button", entry: "button.tsx" },
+    },
+    // how files are installed: glob pattern -> rule
+    files: {
+      // `type` specifies where the file is installed
+      "button.tsx": { type: "ui" },
+      "utils/*": { type: "lib" },
+    },
   },
 });
 
@@ -59,6 +41,8 @@ await writeRegistry(out, {
   cleanDir: true,
 });
 ```
+
+Files imported by `button.tsx` are installed along, such as `utils/cn.ts`. They only need a matching rule, see [Files](/compiler/files) for all options.
 
 ```bash tab="Node (22.18.0 or above)"
 node ./scripts/compile.ts

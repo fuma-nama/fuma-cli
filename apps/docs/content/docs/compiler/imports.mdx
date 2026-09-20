@@ -13,16 +13,29 @@ The compiler collects an **import record** for each reference in a file, then re
 | `dynamic-import`   | `import("x")`                                |
 | `new-url`          | `new URL("./x", import.meta.url)`            |
 
-| The import resolves to                               | Installed code                                 |
-| ---------------------------------------------------- | ---------------------------------------------- |
-| a Node.js built-in, or a macro                       | unchanged                                      |
-| a package outside of registries                      | unchanged, added to dependencies               |
-| a path under [`external`](/compiler#external)        | unchanged                                      |
-| a file with sidecar                                  | relative import of the installed file          |
-| a file with [`preserve`](/compiler/sidecar#preserve) | package import, or relative if installed       |
-| a file exported by its package                       | package import                                 |
-| a file in the same directory or below                | [inherited](/compiler/sidecar#inherited-files) |
-| anything else                                        | compilation error                              |
+| The import resolves to                                             | Installed code                           |
+| ------------------------------------------------------------------ | ---------------------------------------- |
+| a Node.js built-in, or a macro                                     | unchanged                                |
+| a package outside of registries                                    | unchanged, added to dependencies         |
+| a path under [`external`](/compiler#external)                      | unchanged                                |
+| a file matching a rule in [`files`](/compiler/files)               | relative import of the installed file    |
+| a file matching a rule with [`preserve`](/compiler/files#preserve) | package import, or relative if installed |
+| a file exported by its package, without a rule                     | package import                           |
+| anything else                                                      | compilation error                        |
+
+<Callout title="Files excluded from tsconfig.json">
+  A file written for the consumer's codebase is often excluded from your `tsconfig.json`, so `paths`
+  no longer apply to it and `@/lib/source` fails as a missing dependency. Give it a `tsconfig.json`:
+
+```json title="registry/tsconfig.json"
+{
+  "extends": "../tsconfig.json",
+  "include": ["build-graph.ts"],
+  "exclude": []
+}
+```
+
+</Callout>
 
 ## Package Imports
 
@@ -50,15 +63,16 @@ import * as icons from "acme-ui/icons";
 - Names are matched individually, renamed exports are handled.
 - Namespace, side-effect and dynamic imports need the file to be an entry itself.
 - When a name is exported from multiple entries, the first one in `exports` wins.
-- Private packages (`"private": true`) are never imported, their files need a sidecar.
+- Private packages (`"private": true`) are never imported, their files need a rule.
 
 ### Errors
 
 An import that cannot be installed nor swapped fails the compilation, with all problems reported at once:
 
 ```
-src/card/index.tsx: "../theme" has no sidecar, and internalOnly of it is not a
-public export of "acme-ui". Add theme.install.ts, or export it from the package.
+src/card/index.tsx: "../theme" matches no rule in `files` of registry "acme-ui",
+and internalOnly of it is not a public export of "acme-ui". Add a rule for theme.ts,
+or export it from the package.
 ```
 
 This is checked against your source, so a registry never ships an import that your package doesn't satisfy.
@@ -68,8 +82,8 @@ This is checked against your source, so a registry never ships an import that yo
 Imports of another registry in the same compilation follow the same table, whether written as a relative path or a package specifier.
 
 ```tsx title="packages/charts/src/chart.tsx"
-// installable -> relative import of the installed button
+// matches a rule of `acme-ui` -> relative import of the installed button
 import { Button } from "acme-ui/button";
-// not installable, but an entry -> unchanged
+// no rule, but an entry -> unchanged
 import { useCtx } from "acme-ui";
 ```

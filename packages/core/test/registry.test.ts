@@ -10,10 +10,45 @@ const fixtures = path.join(import.meta.dirname, "fixtures/registry");
 const registry: Registry = {
   name: "ui",
   dir: path.join(fixtures, "ui/src"),
-  subRegistries: [{ name: "extra", dir: path.join(fixtures, "extra/src") }],
+  components: {
+    button: { title: "Button", entry: "button.tsx" },
+    card: { description: "A card", entry: "card/index.tsx" },
+    chat: "chat.ts",
+    layout: "layout.tsx",
+    og: "og/image.tsx",
+  },
+  files: {
+    "button.tsx": { type: "ui" },
+    "chat.ts": { type: "route-handler", route: "api/chat" },
+    "layout.tsx": { type: "layout", target: "<dir>/layout.tsx", preserve: true },
+    "utils/cn.ts": { type: "lib" },
+    "card/**": { type: "components", target: "<dir>/card/*" },
+    "og/**": { type: "lib", target: "<dir>/og/*" },
+  },
+  subRegistries: [
+    {
+      name: "extra",
+      dir: path.join(fixtures, "extra/src"),
+      components: { badge: "badge.tsx" },
+      files: {
+        "badge.tsx": { type: "components" },
+        "cn.ts": { alias: "../../ui/src/utils/cn.ts" },
+      },
+    },
+  ],
 };
 
-const shake: Registry = { name: "shake", dir: path.join(fixtures, "shake/src") };
+const shake: Registry = {
+  name: "shake",
+  dir: path.join(fixtures, "shake/src"),
+  components: { all: "all.ts", input: "input.tsx", "nav-link": "nav-link.tsx" },
+  files: {
+    "all.ts": { type: "lib" },
+    "lib/utils.ts": { type: "lib", treeshake: true },
+    "lib/*": { type: "lib" },
+    "*.tsx": { type: "components" },
+  },
+};
 
 async function setup(root = registry) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fuma-cli-"));
@@ -41,11 +76,7 @@ test("compile", async () => {
 test("missing export", async () => {
   await expect(
     compile({
-      root: {
-        name: "ui",
-        dir: path.join(fixtures, "ui/src"),
-        files: { "card/bad.ts": { type: "lib" } },
-      },
+      root: { ...registry, components: { bad: "card/bad.ts" } },
     }),
   ).rejects.toThrow(/internalOnly of it is not a public export of "acme-ui"/);
 });
@@ -151,4 +182,25 @@ test("treeshake: namespace import installs the whole file", async () => {
   for (const line of source.split("\n")) {
     if (!line.startsWith("import ")) expect(lines).toContain(line);
   }
+});
+
+test("path alias of a file excluded by tsconfig.json", async () => {
+  await expect(
+    compile({
+      root: {
+        name: "edge",
+        dir: path.join(fixtures, "edge/src"),
+        components: { graph: "consumer/graph.ts" },
+        files: { "**": { type: "lib" } },
+      },
+    }),
+  ).rejects.toThrow(/"@\/types" is not a dependency of its package/);
+});
+
+test("entry without a rule", async () => {
+  await expect(
+    compile({ root: { ...registry, components: { theme: ["theme.ts", "../package.json"] } } }),
+  ).rejects.toThrow(
+    /"theme.ts" of component "theme" matches no rule in `files`[^]*"..\/package.json" of component "theme" matches no rule/,
+  );
 });
