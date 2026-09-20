@@ -5,8 +5,21 @@ description: Install compiled registry components into a consumer codebase.
 
 ## Connectors
 
-- **HTTP**: `HttpRegistryConnector(baseUrl)`, fetch the registry via HTTP.
-- **File System**: `LocalRegistryConnector(dir)`, read the output of `writeRegistry()`.
+A connector tells the installer where to read the registry from.
+
+```ts tab="HTTP"
+import { HttpRegistryConnector } from "fuma-cli/registry/connector";
+
+// the base URL you serve the registry output at
+const connector = new HttpRegistryConnector("https://acme-ui.com/registry");
+```
+
+```ts tab="File System"
+import { LocalRegistryConnector } from "fuma-cli/registry/connector";
+
+// the `dir` you passed to writeRegistry()
+const connector = new LocalRegistryConnector("./public/registry");
+```
 
 Implement `RegistryConnector` for other sources, it has two methods: `fetchManifest(registry?)` and `fetchFile(file, registry?)`.
 

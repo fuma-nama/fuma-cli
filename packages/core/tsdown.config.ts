@@ -15,7 +15,7 @@ export default defineConfig({
   fixedExtension: false,
   target: "es2023",
   deps: {
-    onlyBundle: ["package-manager-detector", "typia"],
+    onlyBundle: ["typia"],
   },
   exports: {
     enabled: true,
