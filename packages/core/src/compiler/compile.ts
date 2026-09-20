@@ -84,6 +84,8 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
   const modules = new Map<string, Module>();
   /** file -> its rule in `files` of registry */
   const rules = new Map<string, FileRule | undefined>();
+  /** directory -> the registry its files belong to */
+  const owners = new Map<string, RegistryState | undefined>();
   const scanned = new Map<string, ScanResult | undefined>();
   const errors: string[] = [];
   const resolver = new ResolverFactory({
@@ -110,11 +112,15 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
   }
 
   function getOwner(file: string) {
+    const key = path.dirname(file);
+    if (owners.has(key)) return owners.get(key);
+
     let owner: RegistryState | undefined;
     for (const registry of registries) {
       if (!file.startsWith(registry.dir + path.sep)) continue;
       if (!owner || registry.dir.length > owner.dir.length) owner = registry;
     }
+    owners.set(key, owner);
     return owner;
   }
 
@@ -227,14 +233,15 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
 
       for (const item of typeof entry === "string" ? [entry] : entry) {
         const start = getRestStart(item);
-        const matched = start === undefined ? [item] : fs.globSync(item, { cwd: dir }).sort();
-        if (matched.length === 0 || !fs.existsSync(path.join(dir, matched[0]))) {
+        let matched: string[] = [];
+        if (start !== undefined) matched = glob(dir, item, start);
+        else if (fs.existsSync(path.join(dir, item))) matched = [toPosix(path.normalize(item))];
+
+        if (matched.length === 0) {
           errors.push(`registry "${registry.name}": cannot find "${item}" of component "${key}"`);
-          continue;
         }
 
-        for (const match of matched) {
-          const file = toPosix(path.normalize(match));
+        for (const file of matched) {
           if (!getModule(path.join(dir, file), state)) {
             errors.push(
               `registry "${registry.name}": "${file}" of component "${key}" matches no rule in \`files\``,
@@ -298,6 +305,9 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
         if (!id) return { id: name, external: true };
         return resolveAlias({ id, external: false, registry, specifier });
       }
+
+      // most of the resolution time is spent in `node_modules`
+      if (isDependency(name, getOwner(importer))) return { id: name, external: true };
     }
 
     const { path: id } = resolver.resolveFileSync(importer, specifier);
@@ -307,6 +317,16 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
     }
 
     if (isBare) return { id: getPackageName(specifier), external: true };
+  }
+
+  function isDependency(name: string, registry: RegistryState | undefined) {
+    if (!registry) return false;
+    const { dependencies, peerDependencies, devDependencies } = registry.packageJson;
+    return (
+      dependencies?.[name] !== undefined ||
+      peerDependencies?.[name] !== undefined ||
+      devDependencies?.[name] !== undefined
+    );
   }
 
   function resolveAlias(
@@ -553,6 +573,31 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
 
   for (const module of modules.values()) render(module);
   return output;
+}
+
+/**
+ * Same matcher as `files`, as the glob of Node.js has a different syntax.
+ *
+ * @param start - the result of `getRestStart()`, to skip directories before it
+ * @returns matched files relative to `dir`, sorted
+ */
+function glob(dir: string, pattern: string, start: number): string[] {
+  const isMatch = picomatch(pattern);
+  const out: string[] = [];
+
+  /** @param prefix - of file paths, empty or ends with `/` */
+  function walk(prefix: string) {
+    for (const entry of fs.readdirSync(path.join(dir, prefix), { withFileTypes: true })) {
+      const file = prefix + entry.name;
+      if (!entry.isDirectory()) {
+        if (isMatch(file)) out.push(file);
+      } else if (entry.name !== "node_modules" && !entry.name.startsWith(".")) walk(`${file}/`);
+    }
+  }
+
+  const prefix = pattern.slice(0, start);
+  if (fs.existsSync(path.join(dir, prefix))) walk(prefix);
+  return out.sort();
 }
 
 /** @returns where the path after the fixed part of pattern starts, `undefined` for a path */
