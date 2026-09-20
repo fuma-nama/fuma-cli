@@ -34,15 +34,16 @@ async function detectFrameworkFromConfigFiles(dir: string): Promise<Framework> {
  * Detects the preferred framework/tech stack.
  */
 export async function detectFramework(cwd = process.cwd()): Promise<Framework> {
-  const packageJson = await findNearestPackageJson(cwd);
-  if (packageJson === null) return "none";
+  const packageJson = findNearestPackageJson(cwd);
+  if (!packageJson) return "none";
 
-  const projectDir = path.dirname(packageJson.file);
-  const result = await detectFrameworkFromConfigFiles(projectDir);
+  const result = await detectFrameworkFromConfigFiles(path.dirname(packageJson));
   if (result !== "none") return result;
 
   try {
-    return detectFrameworkFromPackageJson(JSON.parse(packageJson.content) as PackageJson);
+    return detectFrameworkFromPackageJson(
+      JSON.parse(await fs.readFile(packageJson, "utf-8")) as PackageJson,
+    );
   } catch {
     return "none";
   }

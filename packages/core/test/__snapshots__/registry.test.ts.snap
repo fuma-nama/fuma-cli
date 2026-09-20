@@ -1,0 +1,261 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`assets & route handlers 1`] = `
+"import { readFile } from "node:fs/promises";
+
+// not a reference
+const docs = "new URL('./nope.ttf', import.meta.url)";
+export const font = readFile(new URL("./font.ttf", import.meta.url));
+"
+`;
+
+exports[`assets & route handlers 2`] = `
+"import { cn } from "../../../lib/cn";
+
+export async function POST(req: Request) {
+  return Response.json(cn(await req.text()));
+}"
+`;
+
+exports[`compile 1`] = `
+{
+  "components": [
+    {
+      "files": [
+        "button.tsx",
+      ],
+      "name": "button",
+      "title": "Button",
+    },
+    {
+      "description": "A card",
+      "files": [
+        "card/index.tsx",
+      ],
+      "name": "card",
+    },
+    {
+      "files": [
+        "chat.ts",
+      ],
+      "name": "chat",
+    },
+    {
+      "files": [
+        "layout.tsx",
+      ],
+      "name": "layout",
+    },
+    {
+      "files": [
+        "og/image.tsx",
+      ],
+      "name": "og",
+    },
+  ],
+  "files": {
+    "button.tsx": {
+      "imports": [
+        {
+          "bindings": [
+            "cn",
+          ],
+          "end": 34,
+          "id": "ui:utils/cn.ts",
+          "start": 20,
+        },
+      ],
+      "type": "ui",
+    },
+    "card/index.tsx": {
+      "dependencies": {
+        "acme-ui": "^1.2.0",
+      },
+      "devDependencies": {
+        "@types/hast": "^3.0.0",
+      },
+      "imports": [
+        {
+          "bindings": [
+            "Button",
+          ],
+          "end": 119,
+          "id": "ui:button.tsx",
+          "start": 106,
+        },
+        {
+          "bindings": [
+            "Layout",
+          ],
+          "end": 258,
+          "id": "ui:layout.tsx",
+          "package": "acme-ui/layout",
+          "start": 244,
+        },
+        {
+          "bindings": [
+            "Title",
+          ],
+          "end": 301,
+          "id": "ui:card/parts.tsx",
+          "start": 284,
+        },
+        {
+          "bindings": undefined,
+          "end": 378,
+          "id": "ui:button.tsx",
+          "start": 365,
+        },
+      ],
+      "target": "<dir>/card/index.tsx",
+      "type": "components",
+    },
+    "card/parts.tsx": {
+      "target": "<dir>/card/parts.tsx",
+      "type": "components",
+    },
+    "chat.ts": {
+      "imports": [
+        {
+          "bindings": [
+            "cn",
+          ],
+          "end": 97,
+          "id": "ui:utils/cn.ts",
+          "start": 83,
+        },
+      ],
+      "route": "api/chat",
+      "type": "route-handler",
+    },
+    "layout.tsx": {
+      "dependencies": {
+        "acme-ui": "^1.2.0",
+      },
+      "target": "<dir>/layout.tsx",
+      "type": "layout",
+    },
+    "og/font.ttf": {
+      "target": "<dir>/og/font.ttf",
+      "type": "lib",
+    },
+    "og/image.tsx": {
+      "imports": [
+        {
+          "bindings": undefined,
+          "end": 172,
+          "id": "ui:og/font.ttf",
+          "start": 158,
+        },
+      ],
+      "target": "<dir>/og/image.tsx",
+      "type": "lib",
+    },
+    "utils/cn.ts": {
+      "dependencies": {
+        "clsx": "^2.0.0",
+      },
+      "type": "lib",
+    },
+  },
+  "name": "ui",
+  "registries": [
+    "extra",
+  ],
+}
+`;
+
+exports[`compile 2`] = `
+"import type { Element } from "hast";
+import { readFile } from "node:fs/promises";
+import { Button } from "ui:button.tsx";
+import { useCtx } from "acme-ui";
+import { useAcmeTheme as useTheme, type Theme } from "acme-ui";
+import { Layout } from "acme-ui/layout";
+import { Title } from "ui:card/parts.tsx";
+
+// keep me
+
+export function Card() {
+  const lazy = import("ui:button.tsx");
+  return <Layout />;
+}
+"
+`;
+
+exports[`compile 3`] = `
+{
+  "components": [
+    {
+      "files": [
+        "badge.tsx",
+      ],
+      "name": "badge",
+    },
+  ],
+  "files": {
+    "badge.tsx": {
+      "dependencies": {
+        "acme-ui": "^1.2.0",
+      },
+      "imports": [
+        {
+          "bindings": [
+            "cn",
+          ],
+          "end": 34,
+          "id": "ui:utils/cn.ts",
+          "start": 20,
+        },
+        {
+          "bindings": [
+            "Button",
+          ],
+          "end": 74,
+          "id": "ui:button.tsx",
+          "start": 61,
+        },
+        {
+          "bindings": [
+            "Layout",
+          ],
+          "end": 115,
+          "id": "ui:layout.tsx",
+          "package": "acme-ui/layout",
+          "start": 101,
+        },
+      ],
+      "type": "components",
+    },
+  },
+  "name": "extra",
+}
+`;
+
+exports[`install 2`] = `
+"import type { Element } from "hast";
+import { readFile } from "node:fs/promises";
+import { Button } from "../ui/button";
+import { useCtx } from "acme-ui";
+import { useAcmeTheme as useTheme, type Theme } from "acme-ui";
+import { Layout } from "acme-ui/layout";
+import { Title } from "./parts";
+
+// keep me
+
+export function Card() {
+  const lazy = import("../ui/button");
+  return <Layout />;
+}
+"
+`;
+
+exports[`preserved import links to installed file 1`] = `
+"import { cn } from "../lib/cn";
+import { Button } from "./ui/button";
+import { Layout } from "./layouts/layout";
+import "acme-ui/style.css";
+
+export const Badge = () => cn(Button, Layout);
+"
+`;

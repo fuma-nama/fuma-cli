@@ -1,69 +1,36 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import picocolors from "picocolors";
-import type { CompiledRegistry } from "@/compiler/compile";
+import type { CompiledRegistry } from "./compile";
 
-export async function writeRegistry(
-  out: CompiledRegistry,
-  options: {
-    dir: string;
-
-    /**
-     * Remove previous outputs
-     *
-     * @defaultValue false
-     */
-    cleanDir?: boolean;
-
-    log?: boolean;
-  },
-): Promise<void> {
-  const { dir, cleanDir = false, log = true } = options;
-
-  if (cleanDir) {
-    await fs.rm(dir, {
-      recursive: true,
-      force: true,
-    });
-    console.log(picocolors.bold(picocolors.greenBright("Cleaned directory")));
-  }
-
-  async function writeInfo() {
-    const file = path.join(dir, "_registry.json");
-    const json = JSON.stringify(out.info, null, 2);
-
-    await writeFile(file, json, log);
-  }
-
-  const write = out.components.map(async (comp) => {
-    const file = path.join(dir, `${comp.name}.json`);
-    const json = JSON.stringify(comp, null, 2);
-
-    await writeFile(file, json, log);
-  });
-
-  write.push(writeInfo());
-  for (const child of out.subRegistries ?? []) {
-    write.push(
-      writeRegistry(child, {
-        dir: path.join(dir, child.name),
-        log: options.log,
-      }),
-    );
-  }
-
-  await Promise.all(write);
+export interface WriteOptions {
+  dir: string;
+  /**
+   * Remove previous outputs
+   *
+   * @defaultValue false
+   */
+  cleanDir?: boolean;
 }
 
-async function writeFile(file: string, content: string, log = true): Promise<void> {
+/**
+ * Write the manifest as `_registry.json` and file contents under `files`, sub registries are written to `<dir>/<name>`.
+ */
+export async function writeRegistry(out: CompiledRegistry, options: WriteOptions): Promise<void> {
+  const { dir, cleanDir = false } = options;
+  if (cleanDir) await fs.rm(dir, { recursive: true, force: true });
+
+  const writes = [write(path.join(dir, "_registry.json"), JSON.stringify(out.manifest))];
+  for (const [file, content] of out.files) {
+    writes.push(write(path.join(dir, "files", file), content));
+  }
+  for (const child of out.subRegistries) {
+    writes.push(writeRegistry(child, { dir: path.join(dir, child.manifest.name) }));
+  }
+
+  await Promise.all(writes);
+}
+
+async function write(file: string, content: string | Buffer) {
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file, content);
-
-  if (log) {
-    const size = (Buffer.byteLength(content) / 1024).toFixed(2);
-
-    console.log(
-      `${picocolors.greenBright("+")} ${path.relative(process.cwd(), file)} ${picocolors.dim(`${size} KB`)}`,
-    );
-  }
 }

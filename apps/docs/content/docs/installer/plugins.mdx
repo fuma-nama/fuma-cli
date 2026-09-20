@@ -5,13 +5,14 @@ description: Extend the installer with plugins.
 
 ## Introduction
 
-You can pass **`plugins`** to installer config.
+Plugins follow the shape of [Rollup plugins](https://rollupjs.org/plugin-development): an object with a `name` and hooks.
 
 ```ts
 import { ComponentInstaller, type InstallerPlugin } from "fuma-cli/registry/installer";
 
 const myPlugin: InstallerPlugin = {
-  // ...
+  name: "my-plugin",
+  // hooks
 };
 
 new ComponentInstaller(connector, {
@@ -19,30 +20,71 @@ new ComponentInstaller(connector, {
 });
 ```
 
-### `beforeDownload`
+| Hook          | When                                | First result wins |
+| ------------- | ----------------------------------- | ----------------- |
+| `resolveId`   | Deciding the output path of a file. | Yes               |
+| `transform`   | After imports of a file are linked. | No, chained       |
+| `writeBundle` | After files are written.            | No                |
 
-Runs before downloading component. Use for logging, auth headers on a custom connector, or prefetch.
+Hooks are called with a context as `this`:
 
-### `afterDownload`
+| Property         | Description                        |
+| ---------------- | ---------------------------------- |
+| `cwd`            | The consumer's project.            |
+| `baseDir`        | Absolute path of `outDir.base`.    |
+| `getFramework()` | The configured/detected framework. |
 
-Runs after the component JSON is downloaded.
+### `resolveId`
 
-Return a **replacement** component object to mutate what will be installed.
+Return the output path as `id`, or `undefined` for the default location.
 
-### `beforeInstall`
+An `external` file is not installed: imports of it point to `id`, and its own imports & dependencies are skipped.
 
-Runs once per **downloaded** component before files are written.
+```ts
+import { existsSync } from "node:fs";
+import path from "node:path";
 
-You can return a new **`DownloadedComponent`** to substitute.
+// reuse the consumer's Shadcn UI components
+const reuseUI: InstallerPlugin = {
+  name: "reuse-ui",
+  resolveId(file) {
+    if (file.info.type !== "ui") return;
 
-### `transformImport`
+    const existing = path.join(this.baseDir, "components/ui", path.basename(file.path));
+    if (existsSync(existing)) return { id: existing, external: true };
+  },
+};
+```
 
-Transform output import specifiers when processing TS/JS files.
+| Field           | Description                                |
+| --------------- | ------------------------------------------ |
+| `file.id`       | `<registry>:<path>`                        |
+| `file.registry` | Name of registry, after `registryAliases`. |
+| `file.path`     | Path in registry.                          |
+| `file.info`     | The manifest entry: `type`, `target`, etc. |
 
 ### `transform`
 
-Transform the file content, useful for codemods, license headers, or framework-specific tweaks.
+Transform the code of JavaScript/TypeScript files, useful for codemods, license headers, or framework-specific tweaks.
 
-Return the updated file content.
+```ts
+const banner: InstallerPlugin = {
+  name: "banner",
+  transform(code, file) {
+    return `// installed from ${file.id}\n${code}`;
+  },
+};
+```
 
-<Callout>`transform` is executed after the default transform.</Callout>
+### `writeBundle`
+
+Receive the files that were written, e.g. to register them somewhere else in the consumer's project.
+
+```ts
+const log: InstallerPlugin = {
+  name: "log",
+  writeBundle(files) {
+    for (const file of files) console.log(file.output);
+  },
+};
+```

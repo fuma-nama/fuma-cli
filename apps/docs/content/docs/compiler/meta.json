@@ -1,3 +1,1 @@
-{
-  "title": "Compiler"
-}
+{ "title": "Compiler", "pages": ["index", "sidecar", "imports", "advanced"] }

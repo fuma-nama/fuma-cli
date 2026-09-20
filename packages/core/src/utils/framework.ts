@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import MagicString from "magic-string";
-import { parse } from "oxc-parser";
 import type {
   Argument,
   ArrayExpression,
@@ -167,6 +166,7 @@ export async function addReactRouterRouteToFile(
   spec: AddReactRouterRouteToFileInput,
   write = true,
 ): Promise<AddReactRouterRouteToFileResult> {
+  const { parse } = await import("oxc-parser");
   const parsed = await parse(routesFilePath, content, {
     lang: routesFilePath.endsWith(".tsx") ? "tsx" : "ts",
     astType: "ts",

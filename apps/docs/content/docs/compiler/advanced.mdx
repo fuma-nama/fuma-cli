@@ -1,18 +1,85 @@
 ---
-title: Pipeline
-description: High-level explanation of compilation stages.
+title: Internals
+description: The pipeline, output format and design decisions.
 ---
 
-`compile()` walks your source in three broad steps:
-
-1. Build a **file graph** from listed files and their imports
-2. **Split** that graph into chunks (one output component per chunk)
-3. **Transform** each file to preparse for installation (e.g. internal imports).
+## Pipeline
 
 <Mermaid
   chart={`flowchart LR
-  FG[File graph] --> CH[Chunks]
-  CH --> TR[Transform]
-  TR --> OUT[Registry JSON]
+  S[Scan] --> L[Link]
+  L -->|inherited module| S
+  L --> G[Generate]
+  G --> OUT[Manifest + files]
 `}
 />
+
+The stages and terms follow bundlers like [Rolldown](https://rolldown.rs), so the concepts carry over.
+
+| Stage        | What it does                                                                                                 |
+| ------------ | ------------------------------------------------------------------------------------------------------------ |
+| **Scan**     | Walk each registry `dir` for sidecars, evaluate them, and read the import/export records of modules.         |
+| **Link**     | `resolveId()` each import record, and decide its outcome, see [Imports](/compiler/imports).                  |
+| **Generate** | Replace import spans in the original text. The rest stays byte-identical, including comments and formatting. |
+
+- **Module**: an installable file. **External**: left to a package, or to the consumer.
+- Scanning is the only step that touches a parser, and it doesn't build an AST.
+- The export index of a package is built on first use.
+- There is no chunking: a component is only a named list of files.
+
+## Output
+
+```
+registry/
+  _registry.json        manifest of root registry
+  files/button.tsx      raw files
+  acme/charts/          sub registry
+    _registry.json
+    files/chart.tsx
+```
+
+```json title="_registry.json"
+{
+  "name": "acme-ui",
+  "components": [{ "name": "card", "files": ["card/index.tsx"] }],
+  "files": {
+    "card/index.tsx": {
+      "type": "components",
+      "target": "<dir>/card/index.tsx",
+      "dependencies": { "acme-ui": "^1.2.0" },
+      "imports": [
+        { "start": 24, "end": 37, "id": "acme-ui:button.tsx", "bindings": ["Button"] },
+        {
+          "start": 65,
+          "end": 79,
+          "id": "acme-ui:layout.tsx",
+          "bindings": ["Layout"],
+          "package": "acme-ui/layout"
+        }
+      ]
+    }
+  }
+}
+```
+
+- `imports` are the spans for installer to fill, so **installing needs no parser**.
+- `bindings` are the names taken from the imported file, omitted when the whole module is used.
+- An import with `package` is a [preserved](/compiler/sidecar#preserve) one, the file content already contains the package specifier.
+- The manifest has everything needed to link, file contents are only downloaded for files that get installed. Binary files are served as-is.
+- The schema is exported from `fuma-cli/registry/schema`.
+
+## Toolchain
+
+Parsing is isolated in `compiler/scan.ts`, built on the module record of `oxc-parser`. Resolution uses `oxc-resolver`.
+
+We evaluated [Yuku](https://yuku.fyi) (parser, analyzer & codegen) on 408 files of Fumadocs:
+
+| Task                                  | Time  |
+| ------------------------------------- | ----- |
+| `oxc-parser`, module record only      | 25 ms |
+| `oxc-parser`, with AST                | 85 ms |
+| `yuku-parser`                         | 58 ms |
+| `yuku-analyzer`, all files + `link()` | 90 ms |
+
+- **Codegen** cannot produce installed files: printing an unmodified AST changed 49% of lines in 188 files (blank lines, JSX & import wrapping). Installed code is meant to be read and diffed, so we edit spans of the original text.
+- **Analyzer** links exports across files natively, which replaces about 40 lines of `compiler/exports.ts`. It has no resolver, so `oxc-resolver` stays, and it would be a second native toolchain for that gain.
