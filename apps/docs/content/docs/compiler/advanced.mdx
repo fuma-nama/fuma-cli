@@ -8,7 +8,6 @@ description: The pipeline, output format and design decisions.
 <Mermaid
   chart={`flowchart LR
   S[Scan] --> L[Link]
-  L -->|inherited module| S
   L --> G[Generate]
   G --> OUT[Manifest + files]
 `}
@@ -16,13 +15,13 @@ description: The pipeline, output format and design decisions.
 
 The stages and terms follow bundlers like [Rolldown](https://rolldown.rs), so the concepts carry over.
 
-| Stage        | What it does                                                                                                 |
-| ------------ | ------------------------------------------------------------------------------------------------------------ |
-| **Scan**     | Walk each registry `dir` for sidecars, evaluate them, and read the import/export records of modules.         |
-| **Link**     | `resolveId()` each import record, and decide its outcome, see [Imports](/compiler/imports).                  |
-| **Generate** | Replace import spans in the original text. The rest stays byte-identical, including comments and formatting. |
+| Stage        | What it does                                                                                                                                                                          |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Scan**     | Create a module for each entry of [`components`](/compiler#components), and read the import/export records of modules.                                                                |
+| **Link**     | `resolveId()` each import record, and decide its outcome, see [Imports](/compiler/imports). Imported files matching a [rule](/compiler/files) become modules, and are linked in turn. |
+| **Generate** | Replace import spans in the original text. The rest stays byte-identical, including comments and formatting.                                                                          |
 
-[Tree-shaken](/compiler/sidecar#treeshake) modules do more in the same scan: import declarations are split per binding, and statements are analyzed. Generate only shifts their spans by the edits.
+[Tree-shaken](/compiler/files#treeshake) modules do more in the same scan: import declarations are split per binding, and statements are analyzed. Generate only shifts their spans by the edits.
 
 - **Module**: an installable file. **External**: left to a package, or to the consumer.
 - Scanning reads the import/export records of the analyzer, it doesn't walk the AST. Statements are only indexed for tree-shaken modules.
@@ -60,8 +59,8 @@ registry/
 
 - `imports` are the positions for installer to fill, so **installing needs no parser**. Only a [merge](/installer#plan--apply) analyzes the file of consumer.
 - The file content has the `id` at `start`, or the `package` specifier when defined. No end position is stored.
-- `bindings` are the names taken from a [tree-shaken](/compiler/sidecar#treeshake) file, omitted otherwise, or when the whole module is used.
-- An import with `package` is a [preserved](/compiler/sidecar#preserve) one, the file content already contains the package specifier.
+- `bindings` are the names taken from a [tree-shaken](/compiler/files#treeshake) file, omitted otherwise, or when the whole module is used.
+- An import with `package` is a [preserved](/compiler/files#preserve) one, the file content already contains the package specifier.
 - `stmtInfos` is defined for tree-shaken files, see [below](#statement-info).
 - The manifest has everything needed to link, file contents are only downloaded for files that get installed. Binary files are served as-is.
 - The types and `assertManifest()` are exported from `fuma-cli/registry/schema`. The validator is generated from the types at build time by [typia](https://typia.io), so it has no runtime dependency.

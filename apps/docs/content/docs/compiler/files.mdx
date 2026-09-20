@@ -1,0 +1,134 @@
+---
+title: Files
+description: Rules that decide how each file is installed.
+---
+
+## Rules
+
+`files` maps glob patterns to rules. A rule says **how** a matched file is installed, not **whether** it is.
+
+```ts
+const registry: Registry = {
+  name: "acme-ui",
+  dir: "src",
+  components: {
+    button: "button.tsx",
+    card: "card/index.tsx",
+  },
+  files: {
+    "button.tsx": { type: "ui" },
+    "utils/*": { type: "lib" },
+    "card/**": { type: "components", target: "<dir>/card/*" },
+  },
+};
+```
+
+A file is installed when it is an entry of a [component](/compiler#components), or imported by an installed file. Here, `utils/cn.ts` is only installed if `button.tsx` or a file of `card` imports it.
+
+### Patterns
+
+- Patterns are matched against the path relative to `dir`, using [`path.matchesGlob()`](https://nodejs.org/api/path.html#pathmatchesglobpath-pattern) of Node.js.
+- **The first match wins**, put specific patterns before general ones.
+- A rule also applies when the file is imported from [another registry](/compiler/imports#cross-registry-imports).
+
+```ts
+const files: Registry["files"] = {
+  "utils/cn.ts": { type: "lib", treeshake: true },
+  "utils/*": { type: "lib" },
+};
+```
+
+Assets referenced as `new URL("./font.ttf", import.meta.url)` need a matching rule like any other file.
+
+## Options
+
+| Option      | Description                                                                                  |
+| ----------- | -------------------------------------------------------------------------------------------- |
+| `type`      | `components`, `ui`, `lib`, `css`, `layout` or `route-handler`. Decides the output directory. |
+| `target`    | Output path, see [below](#target). Defaults to `<dir>/<file name>`.                          |
+| `route`     | For `route-handler` only, see [Macro](/macros).                                              |
+| `preserve`  | Prefer the package import, see [below](#preserve).                                           |
+| `treeshake` | Install only the declarations in use, see [below](#treeshake).                               |
+| `alias`     | Install another file instead, see [below](#alias). Cannot be combined with other options.    |
+
+### `target`
+
+- `<dir>` is the output directory of `type`, chosen by the consumer.
+- `*` is the path after the fixed (non-glob) part of the pattern.
+
+| Pattern       | `target`          | File                | Installed to                   |
+| ------------- | ----------------- | ------------------- | ------------------------------ |
+| `button.tsx`  |                   | `button.tsx`        | `<dir>/button.tsx`             |
+| `ui/**`       |                   | `ui/form/input.tsx` | `<dir>/input.tsx`              |
+| `ui/**`       | `<dir>/*`         | `ui/form/input.tsx` | `<dir>/form/input.tsx`         |
+| `ui/**`       | `<dir>/openapi/*` | `ui/form/input.tsx` | `<dir>/openapi/form/input.tsx` |
+| `icons/*.tsx` | `<dir>/icons/*`   | `icons/close.tsx`   | `<dir>/icons/close.tsx`        |
+
+The location of a file only depends on its own path, never on the file importing it.
+
+### `preserve`
+
+For files that are both installable and exported by your package, like layouts.
+
+```ts
+const registry: Registry = {
+  name: "acme-ui",
+  dir: "src",
+  components: { "layouts/docs": "layouts/docs.tsx" },
+  files: {
+    "layouts/*": { type: "layout", preserve: true },
+  },
+};
+```
+
+When another file imports it:
+
+- The installed code imports `acme-ui/layouts/docs`, the layout is **not** installed.
+- Unless the layout is part of the installation, or the consumer has installed it before. The import then points to the local file.
+
+It falls back to a normal file when the package doesn't export the imported names.
+
+### `treeshake`
+
+For files of many independent utilities, like `utils.ts`. The file is installed per declaration instead of as a whole.
+
+```ts
+const files: Registry["files"] = {
+  "lib/utils.ts": { type: "lib", treeshake: true },
+};
+```
+
+Given `utils.ts` exports `cn`, `isActive` and `mergeRefs`, installing a component that imports `isActive` writes:
+
+- `isActive`, with its comments.
+- The private helpers and imports it references, and the dependencies of those imports only.
+- Statements that declare nothing, like `"use client"` and side effects.
+
+| The consumer's `lib/utils.ts`  | Result                                                     |
+| ------------------------------ | ---------------------------------------------------------- |
+| Doesn't exist                  | Created with the declarations in use.                      |
+| Exists                         | Missing declarations are [merged](/installer#plan--apply). |
+| Already declares the same name | Their declaration is kept, yours is not added.             |
+
+A namespace import, a dynamic import, or being an entry of a component takes all of it.
+
+<Callout title="Import declarations are split">
+  The compiled file has one binding per import declaration, so that an import can be installed on
+  its own.
+</Callout>
+
+### `alias`
+
+Resolve every import of the file to another installable file. The specifier is resolved like an import written in `dir`. Use it to dedupe copies of the same utility across packages.
+
+```ts
+const charts: Registry = {
+  name: "acme/charts",
+  dir: "packages/charts/src",
+  files: {
+    "cn.ts": { alias: "../../ui/src/utils/cn" },
+    // `*` works like in `target`
+    "utils/{cn,merge-refs}.ts": { alias: "../../ui/src/utils/*" },
+  },
+};
+```

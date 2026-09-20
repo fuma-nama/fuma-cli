@@ -1,6 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
-import { findPackageJSON } from "node:module";
+import { findPackageJSON, isBuiltin } from "node:module";
 import { pathToFileURL } from "node:url";
 import { ResolverFactory } from "oxc-resolver";
 import { MACRO_PATH } from "@/constants";
@@ -9,7 +9,7 @@ import type { Manifest, ManifestFile } from "@/registry/schema";
 import type { PackageJson } from "@/types";
 import { findNearestPackageJson } from "@/utils/fs";
 import { buildExportIndex, type ExportIndex, nameKey } from "./exports";
-import type { InstallInfo, Registry } from "./registry";
+import type { FileRule, Registry } from "./registry";
 import { type ImportRecord, isScannable, scan, type ScanResult } from "./scan";
 import { stmtAt } from "./stmt";
 
@@ -30,8 +30,9 @@ interface RegistryState {
   packageJson: PackageJson;
   /** specifier -> source file */
   entries: Map<string, string>;
+  /** `fixed` is the part before globs, `undefined` for a path */
+  rules: { pattern: string; fixed?: string; rule: FileRule }[];
   exportIndex?: ExportIndex;
-  components: Map<string, Manifest["components"][number]>;
   output: CompiledRegistry;
 }
 
@@ -69,7 +70,6 @@ interface PackageImport {
   missing?: string[];
 }
 
-const SIDECAR = /\.install\.ts$/;
 const OUT_DIR = "./dist/";
 const SOURCE_EXTS = [".tsx", ".ts", ".jsx", ".js"];
 
@@ -79,8 +79,8 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
   const packages = new Map<string, RegistryState>();
   /** file -> module, in the order to process */
   const modules = new Map<string, Module>();
-  /** file -> the specifier of file installed in place of it, and where to resolve it from */
-  const aliases = new Map<string, { specifier: string; importer: string }>();
+  /** file -> its rule in `files` of registry */
+  const rules = new Map<string, FileRule | undefined>();
   const scanned = new Map<string, ScanResult | undefined>();
   const errors: string[] = [];
   const resolver = new ResolverFactory({
@@ -92,28 +92,75 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
 
   // --- scan stage
 
+  function isTreeshaken(file: string) {
+    const rule = getRule(file);
+    return rule !== undefined && !("alias" in rule) && rule.treeshake;
+  }
+
   function scanFile(file: string) {
     if (scanned.has(file)) return scanned.get(file);
     const out = isScannable(path.extname(file))
-      ? scan(file, fs.readFileSync(file, "utf-8"), modules.get(file)?.treeshake)
+      ? scan(file, fs.readFileSync(file, "utf-8"), isTreeshaken(file))
       : undefined;
     scanned.set(file, out);
     return out;
   }
 
-  function addModule(registry: RegistryState, file: string, info: InstallInfo, importer: string) {
-    if ("alias" in info) {
-      aliases.set(file, { specifier: info.alias, importer });
-      return;
+  function getOwner(file: string) {
+    let owner: RegistryState | undefined;
+    for (const registry of registries) {
+      if (!file.startsWith(registry.dir + path.sep)) continue;
+      if (!owner || registry.dir.length > owner.dir.length) owner = registry;
+    }
+    return owner;
+  }
+
+  function getRule(file: string, registry?: RegistryState) {
+    if (rules.has(file)) return rules.get(file);
+    registry ??= getOwner(file);
+    let out: FileRule | undefined;
+
+    const relative = registry && toPosix(path.relative(registry.dir, file));
+    // files outside of `dir` cannot be served
+    if (relative && !relative.startsWith("../")) {
+      for (const { pattern, fixed, rule } of registry!.rules) {
+        if (fixed === undefined) {
+          if (relative !== pattern) continue;
+          // compiling a glob is slow, skip when the fixed part already differs
+        } else if (!relative.startsWith(fixed) || !path.posix.matchesGlob(relative, pattern)) {
+          continue;
+        }
+
+        out = rule;
+        if (fixed === undefined) break;
+        // `*` refers to the path after the fixed part of pattern
+        const rest = relative.slice(fixed.length);
+        if ("alias" in rule) out = { alias: rule.alias.replace(/\*+/, rest) };
+        else if ("target" in rule && rule.target) {
+          out = { ...rule, target: rule.target.replace(/\*+/, rest) };
+        }
+        break;
+      }
     }
 
-    const { component, preserve = false, treeshake = false, ...output } = info;
+    rules.set(file, out);
+    return out;
+  }
+
+  /** @returns the installable file, `undefined` if no rule matches it */
+  function getModule(file: string, registry: RegistryState) {
+    let module = modules.get(file);
+    if (module) return module;
+    const rule = getRule(file, registry);
+    if (!rule || "alias" in rule) return;
+
+    const { preserve = false, treeshake = false, ...output } = rule;
     if (treeshake && !isScannable(path.extname(file))) {
       errors.push(`${file}: only scripts can be tree-shaken`);
     }
 
     const relative = toPosix(path.relative(registry.dir, file));
-    const module: Module = {
+    module = {
       id: encodeFileId(registry.registry.name, relative),
       registry,
       file,
@@ -125,20 +172,10 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
     };
     modules.set(file, module);
     registry.output.manifest.files[relative] = output;
-
-    if (!component) return module;
-    const name = typeof component === "string" ? component : component.name;
-    let entry = registry.components.get(name);
-    if (!entry) {
-      entry = { name, files: [] };
-      registry.components.set(name, entry);
-    }
-    if (typeof component === "object") Object.assign(entry, component);
-    entry.files.push(relative);
     return module;
   }
 
-  async function scanRegistry(registry: Registry): Promise<CompiledRegistry> {
+  function scanRegistry(registry: Registry): CompiledRegistry {
     const dir = path.resolve(registry.dir);
     const pkg = findNearestPackageJson(dir);
     if (!pkg) throw new Error(`failed to find the package.json of registry "${registry.name}"`);
@@ -148,7 +185,7 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
       dir,
       packageJson: JSON.parse(fs.readFileSync(pkg, "utf-8")),
       entries: new Map(),
-      components: new Map(),
+      rules: [],
       output: {
         manifest: { name: registry.name, components: [], files: {} },
         files: new Map(),
@@ -157,31 +194,42 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
     };
     registries.push(state);
     resolveEntries(state);
+    for (const pattern in registry.files) {
+      const glob = pattern.search(/[^/]*[*?[{]/);
+      state.rules.push({
+        pattern,
+        fixed: glob === -1 ? undefined : pattern.slice(0, glob),
+        rule: registry.files[pattern],
+      });
+    }
 
     const { name } = state.packageJson;
     if (name && !packages.has(name)) packages.set(name, state);
 
-    const sidecars = findSidecars(dir);
-    const loaded = await Promise.all(sidecars.map((file) => import(pathToFileURL(file).href)));
-    for (let i = 0; i < sidecars.length; i++) {
-      const base = sidecars[i].replace(SIDECAR, "");
-      const file = fs.existsSync(base) ? base : findSource(base);
-      if (file) addModule(state, file, loaded[i].default, sidecars[i]);
-      else errors.push(`${sidecars[i]}: cannot find the file it describes`);
-    }
+    for (const name in registry.components) {
+      const value = registry.components[name];
+      const { entry, ...info } =
+        typeof value === "object" && !Array.isArray(value) ? value : { entry: value };
+      const component: Manifest["components"][number] = { name, ...info, files: [] };
 
-    if (registry.files) {
-      for (const k in registry.files) {
-        const file = path.join(dir, k);
-        addModule(state, file, registry.files[k], file);
+      for (const item of typeof entry === "string" ? [entry] : entry) {
+        const file = path.join(dir, item);
+        if (!fs.existsSync(file))
+          errors.push(`registry "${registry.name}": cannot find "${item}" of component "${name}"`);
+        else if (getModule(file, state)) component.files.push(toPosix(path.normalize(item)));
+        else
+          errors.push(
+            `registry "${registry.name}": "${item}" of component "${name}" matches no rule in \`files\``,
+          );
       }
+      state.output.manifest.components.push(component);
     }
 
     if (registry.subRegistries) {
       state.output.manifest.registries = [];
       for (const child of registry.subRegistries) {
         state.output.manifest.registries.push(child.name);
-        state.output.subRegistries.push(await scanRegistry(child));
+        state.output.subRegistries.push(scanRegistry(child));
       }
     }
 
@@ -227,23 +275,22 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
 
     const { path: id } = resolver.resolveFileSync(importer, specifier);
     if (id && !id.includes(`${path.sep}node_modules${path.sep}`)) {
-      let owner: RegistryState | undefined;
-      for (const registry of registries) {
-        if (!id.startsWith(registry.dir + path.sep)) continue;
-        if (!owner || registry.dir.length > owner.dir.length) owner = registry;
-      }
+      const owner = getOwner(id);
       if (owner) return resolveAlias({ id, external: false, registry: owner });
     }
 
     if (isBare) return { id: getPackageName(specifier), external: true };
   }
 
-  function resolveAlias(resolved: ResolvedId): ResolvedId | undefined {
-    const alias = !resolved.external && aliases.get(resolved.id);
-    if (!alias) return resolved;
+  function resolveAlias(
+    resolved: Extract<ResolvedId, { external: false }>,
+  ): ResolvedId | undefined {
+    const rule = getRule(resolved.id, resolved.registry);
+    if (!rule || !("alias" in rule)) return resolved;
 
-    const out = resolveId(alias.specifier, alias.importer);
-    if (!out || out.external) errors.push(`${alias.importer}: cannot resolve "${alias.specifier}"`);
+    const importer = path.join(resolved.registry.dir, "index.ts");
+    const out = resolveId(rule.alias, importer);
+    if (!out || out.external) errors.push(`${resolved.id}: cannot resolve alias "${rule.alias}"`);
     return out;
   }
 
@@ -319,20 +366,6 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
     return { declaration: lines.join("\n") };
   }
 
-  function inherit(importer: Module, file: string): Module | undefined {
-    const { output, registry } = importer;
-    const dir = path.dirname(importer.file);
-    if (output.type === "route-handler" || !file.startsWith(dir + path.sep)) return;
-
-    const base = output.target ? path.posix.dirname(output.target) : "<dir>";
-    return addModule(
-      registry,
-      file,
-      { type: output.type, target: path.posix.join(base, toPosix(path.relative(dir, file))) },
-      importer.file,
-    );
-  }
-
   /** @param pos - position of the import, tree-shaken modules carry dependencies on statements */
   function addDependency(module: Module, name: string, pos: number) {
     const { registry, packageJson, dir } = module.registry;
@@ -364,8 +397,10 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
       name = types;
       version = packageJson.devDependencies[types];
     } else if (version === undefined) {
-      console.warn(`${module.file}: "${name}" is not a dependency of its package`);
-      version = null;
+      errors.push(
+        `${module.file}: "${name}" is not a dependency of its package. Add it to package.json or \`dependencies\` of registry, a path alias means the file is excluded by its tsconfig.json.`,
+      );
+      return;
     }
 
     const stmts = scanFile(module.file)?.stmts;
@@ -383,7 +418,7 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
 
   function linkImport(module: Module, record: ImportRecord, quote: string) {
     const { specifier, start, end, bindings } = record;
-    if (specifier.startsWith("node:") || specifier.startsWith(MACRO_PATH)) return;
+    if (isBuiltin(specifier) || specifier.startsWith(MACRO_PATH)) return;
 
     const resolved = resolveId(specifier, module.file);
     if (!resolved) {
@@ -398,26 +433,24 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
     }
 
     if (isExternal(resolved)) return;
-    const target = modules.get(resolved.id);
+    const target = getModule(resolved.id, resolved.registry);
     const swap = !target || target.preserve ? toPackageImport(record, resolved, quote) : {};
 
     // preserved modules without a public equivalent are linked as usual
     if (swap.specifier === undefined && (target || swap.declaration === undefined)) {
-      const local = target ?? inherit(module, resolved.id);
-      if (local) {
+      if (target) {
         module.edits.push({
           start,
           end,
-          text: local.id,
-          link: { id: local.id, bindings: local.treeshake ? bindings : undefined },
+          text: target.id,
+          link: { id: target.id, bindings: target.treeshake ? bindings : undefined },
         });
         return;
       }
 
-      const { dir, packageJson } = resolved.registry;
-      const relative = path.relative(dir, resolved.id);
+      const { dir, packageJson, registry } = resolved.registry;
       errors.push(
-        `${module.file}: "${specifier}" has no sidecar, and ${swap.missing!.join(", ")} of it is not a public export of "${packageJson.name}". Add ${relative.slice(0, -path.extname(relative).length)}.install.ts, or export it from the package.`,
+        `${module.file}: "${specifier}" matches no rule in \`files\` of registry "${registry.name}", and ${swap.missing!.join(", ")} of it is not a public export of "${packageJson.name}". Add a rule for ${toPosix(path.relative(dir, resolved.id))}, or export it from the package.`,
       );
       return;
     }
@@ -480,9 +513,9 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
     output.stmtInfos = stmts;
   }
 
-  const output = await scanRegistry(root);
+  const output = scanRegistry(root);
 
-  // inherited modules are appended on the way
+  // modules are appended on the way
   for (const module of modules.values()) {
     const result = scanFile(module.file);
     if (!result) continue;
@@ -492,20 +525,7 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
   if (errors.length > 0) throw new Error(errors.join("\n\n"));
 
   for (const module of modules.values()) render(module);
-  for (const registry of registries) {
-    registry.output.manifest.components = Array.from(registry.components.values());
-  }
   return output;
-}
-
-function findSidecars(dir: string, out: string[] = []): string[] {
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
-    const file = path.join(dir, entry.name);
-    if (entry.isDirectory()) findSidecars(file, out);
-    else if (SIDECAR.test(entry.name)) out.push(file);
-  }
-  return out;
 }
 
 function findSource(base: string) {

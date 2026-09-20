@@ -65,12 +65,12 @@ await installer.apply(plan);
 - `plan()` links the components against the consumer's codebase, and downloads the files to install. Nothing is written.
 - `apply()` writes the files, asking `io.confirmFileOverride()` for the ones with `overwrite` status.
 
-| Status      | Meaning                                                                                       |
-| ----------- | --------------------------------------------------------------------------------------------- |
-| `create`    | The file doesn't exist.                                                                       |
-| `overwrite` | The file exists with different content.                                                       |
-| `merge`     | A [tree-shaken](/compiler/sidecar#treeshake) file exists, and lacks some declarations in use. |
-| `unchanged` | Nothing to write.                                                                             |
+| Status      | Meaning                                                                                     |
+| ----------- | ------------------------------------------------------------------------------------------- |
+| `create`    | The file doesn't exist.                                                                     |
+| `overwrite` | The file exists with different content.                                                     |
+| `merge`     | A [tree-shaken](/compiler/files#treeshake) file exists, and lacks some declarations in use. |
+| `unchanged` | Nothing to write.                                                                           |
 
 A merge only adds code, so it needs no confirmation:
 
@@ -81,8 +81,8 @@ A merge only adds code, so it needs no confirmation:
 Route handlers are installed by a built-in plugin, using the same hooks available to you.
 
 <Callout title="How preserved imports are linked">
-  An import of a [preserved](/compiler/sidecar#preserve) file points to the local file when it is
-  part of the plan, or already exists in the consumer's codebase. Otherwise, it stays as a package
+  An import of a [preserved](/compiler/files#preserve) file points to the local file when it is part
+  of the plan, or already exists in the consumer's codebase. Otherwise, it stays as a package
   import.
 </Callout>
 

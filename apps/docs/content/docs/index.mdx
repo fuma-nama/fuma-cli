@@ -13,7 +13,7 @@ Fuma CLI is a toolkit for building **your own [shadcn/ui](https://ui.shadcn.com)
 Fuma CLI addresses a few problems when maintaining larger registries:
 
 - **No edge to maintain**: the compiler reads the imports of each file. Referenced files are installed along, referenced packages become dependencies.
-- **Colocated**: a file is made installable by a [sidecar](/compiler/sidecar) next to it, there is no central list of files.
+- **Configured like a bundler**: [components](/compiler#components) are the entries, and [glob rules](/compiler/files) decide where files are installed. There is no list of files to keep in sync.
 - **Works with published packages**: when a file imports something your package already exports, the installed code imports it from the package. The compiler verifies every name it rewrites.
 - **Monorepo-friendly**: split registries across workspaces, with cross-registry references.
 - **Avoid duplication**: with macros, the same file can be installed for multiple frameworks.
@@ -26,7 +26,7 @@ What is different:
 
 ## How it works
 
-1. Add sidecars to the files you want to be installable.
+1. Declare your components, and the rules for installing files.
 2. Compile the registry with Fuma CLI.
 3. Serve the output via CDNs/Web.
 4. In your CLI package, install components using the Fuma CLI installer.

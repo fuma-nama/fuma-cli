@@ -1,27 +1,18 @@
-import type { ManifestFile } from "@/registry/schema";
+import type { ManifestComponent, ManifestFile } from "@/registry/schema";
 import type { DistributiveOmit } from "@/types";
 
-export interface ComponentInfo {
-  name: string;
-  title?: string;
-  description?: string;
-  /** hidden from component lists, but still installable */
-  unlisted?: boolean;
-}
+export type Component = Omit<ManifestComponent, "name" | "files"> & {
+  /** entry files, relative to `dir` */
+  entry: string | string[];
+};
 
-export type InstallInfo =
+export type FileRule =
   | (DistributiveOmit<
       ManifestFile,
       "imports" | "stmtInfos" | "dependencies" | "devDependencies"
     > & {
       /**
-       * The component this file belongs to, pass an object on one of its files to describe the component.
-       *
-       * Without a component, the file is only installed when imported by another file.
-       */
-      component?: string | ComponentInfo;
-      /**
-       * Keep imports of this file as package imports, unless the consumer has installed it.
+       * Keep imports of the file as package imports, unless the consumer has installed it.
        *
        * The file must be reachable from an export of its package.
        */
@@ -32,14 +23,14 @@ export type InstallInfo =
       treeshake?: boolean;
     })
   | {
-      /** resolve imports of this file to another installable file, as an import specifier relative to the sidecar */
+      /** install another file instead, as an import specifier relative to `dir` */
       alias: string;
     };
 
 export interface Registry {
   /** unique name of registry */
   name: string;
-  /** the directory to scan for sidecars, file paths are relative to it */
+  /** the source directory, paths are relative to it */
   dir: string;
   /**
    * source files of package exports, e.g. `{ "./button": "button.tsx" }`.
@@ -47,15 +38,17 @@ export interface Registry {
    * By default, derived from `exports` in `package.json` by mapping `dist` to `dir`.
    */
   entries?: Record<string, string>;
-  /** install info of files without a sidecar, e.g. generated from a glob */
-  files?: Record<string, InstallInfo>;
+  /** name -> entry files, or the component with its info */
+  components?: Record<string, string | string[] | Component>;
+  /**
+   * glob pattern -> how the matched files are installed, the first match wins.
+   *
+   * A file is only installed when it is an entry of component, or imported by an installed file.
+   */
+  files?: Record<string, FileRule>;
   /** paths (relative to `dir`) the consumer is expected to own, imports of them are kept as-is */
   external?: string[];
   /** override the version of dependencies, `null` for the latest */
   dependencies?: Record<string, string | null>;
   subRegistries?: Registry[];
-}
-
-export function defineInstall(info: InstallInfo): InstallInfo {
-  return info;
 }
