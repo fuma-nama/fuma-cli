@@ -1,0 +1,147 @@
+---
+title: Migrate from v1
+description: Move a v1 registry and installer to v2.
+---
+
+<Callout type="warn" title="The output format changed">
+  A v2 installer cannot read a v1 registry, and vice versa. Publish the new registry output and your
+  CLI together.
+</Callout>
+
+## Registry
+
+### Replace the Component List with Sidecars [step]
+
+Remove `components` from your `Registry`, and describe each listed file in a [sidecar](/compiler/sidecar) next to it.
+
+```ts title="registry.ts (v1)"
+export const registry: Registry = {
+  name: "acme-ui",
+  dir,
+  components: [
+    {
+      name: "button",
+      title: "Button",
+      files: [{ type: "ui", path: "src/button.tsx", target: "<dir>/primitives/button.tsx" }],
+    },
+  ],
+};
+```
+
+```ts title="registry.ts (v2)"
+export const registry: Registry = {
+  name: "acme-ui",
+  dir: path.join(dir, "src"),
+};
+```
+
+```ts title="src/button.install.ts (v2)"
+import { defineInstall } from "fuma-cli/compiler";
+
+export default defineInstall({
+  type: "ui",
+  target: "<dir>/primitives/button.tsx",
+  component: { name: "button", title: "Button" },
+});
+```
+
+| v1                                 | v2                                                                                                                 |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `components[].name`, `title`, etc. | [`component`](/compiler/sidecar#component) of a sidecar.                                                           |
+| `components[].files[]`             | One sidecar per file. `path` is implied by the sidecar's location.                                                 |
+| Files imported by a listed file    | [Inherited](/compiler/sidecar#inherited-files) when in the same directory or below, otherwise they need a sidecar. |
+| Files generated from a glob        | [`files`](/compiler#files) of `Registry`.                                                                          |
+| `dir` as the repository root       | `dir` is the directory to scan, usually `src`. It must belong to a package.                                        |
+
+### Remove Compile Hooks [step]
+
+`compile()` only accepts `root`.
+
+| v1                                          | v2                                                                                                                                    |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `onUnknownFile` returning a file            | Add a sidecar, or rely on inherited files.                                                                                            |
+| `onUnknownFile` / `isExternal` for packages | Automatic: imports of files [exported by your package](/compiler/imports#package-imports) become package imports.                     |
+| `isExternal` for files the consumer owns    | [`external`](/compiler#external) of `Registry`.                                                                                       |
+| `onParseReference`                          | [`alias`](/compiler/sidecar#alias) to point a file to another, [`preserve`](/compiler/sidecar#preserve) to prefer the package import. |
+| `beforeTransform`, `afterTransform`         | Removed. Transform on install with a [plugin](/installer/plugins#transform).                                                          |
+
+If the compilation reports an import that is not a public export, either export it from your package or add a sidecar to the file. See [Errors](/compiler/imports#errors).
+
+### Update Registry Options [step]
+
+| v1                          | v2                                                                                                                                                         |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packageJson`               | Removed, the nearest `package.json` of `dir` is used.                                                                                                      |
+| `tsconfigPath`              | Removed, the nearest `tsconfig.json` of each file is used.                                                                                                 |
+| `dependencies`              | Unchanged: override the version of a dependency, `null` for the latest.                                                                                    |
+| `devDependencies`           | Removed. `@types/*` packages are detected from your `package.json`.                                                                                        |
+| `subComponents`             | Removed. Import the file instead, across [registries](/compiler/imports#cross-registry-imports) too. References to registries over HTTP are not supported. |
+| `meta`, `content` of a file | Removed.                                                                                                                                                   |
+
+### Route Handlers [step]
+
+Describe the route in a sidecar, the [macro](/macros) itself is unchanged.
+
+```ts title="src/post-route.install.ts"
+export default defineInstall({
+  type: "route-handler",
+  route: "api/posts/[id]",
+  component: "my-component",
+});
+```
+
+### Serve the New Output [step]
+
+`writeRegistry()` has the same signature, but writes a manifest and raw files instead of one JSON per component:
+
+```
+registry/
+  _registry.json
+  files/button.tsx
+```
+
+Serve the whole directory. If you validated the output yourself, `fuma-cli/registry/schema` now exports types and `assertManifest()` instead of Zod schemas.
+
+## Installer
+
+### Options [step]
+
+| v1                           | v2                                                                                  |
+| ---------------------------- | ----------------------------------------------------------------------------------- |
+| `io.onFileDownloaded(file)`  | `io.onFileWritten(file)`                                                            |
+| `io.onWarn`                  | Removed.                                                                            |
+| `options.path` in `io`       | `file.output`, the absolute output path.                                            |
+| `install(name, subRegistry)` | Unchanged. It is now a shorthand of [`plan()` & `apply()`](/installer#plan--apply). |
+
+`confirmFileOverride` is only asked for the `overwrite` status. Files of [tree-shaken](/compiler/sidecar#treeshake) sources are merged without asking.
+
+### Listing Components [step]
+
+`connector.fetchRegistryInfo()` is replaced by the manifest:
+
+```ts
+const manifest = await installer.fetchManifest(); // or fetchManifest("sub-registry")
+
+for (const item of manifest.components) {
+  if (item.unlisted) continue;
+  console.log(item.name, item.title, item.description);
+}
+```
+
+A custom `RegistryConnector` now implements `fetchManifest(registry?)` and `fetchFile(file, registry?)`.
+
+### Plugins [step]
+
+Plugins need a `name`, and hooks are called with a [context](/installer/plugins) as `this`.
+
+| v1                               | v2                                                                                                                                    |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `transform(code, context)`       | `transform(code, file)`                                                                                                               |
+| `transformImport`                | [`resolveId`](/installer/plugins#resolveid): decide where a file is installed, or mark it `external` to reuse a file of the consumer. |
+| `beforeInstall`, `afterDownload` | Removed. Inspect or filter `plan.files` between `plan()` and `apply()`.                                                               |
+| `beforeDownload`                 | Removed. Put auth and logging in your connector.                                                                                      |
+| (new)                            | [`writeBundle`](/installer/plugins#writebundle), after files are written.                                                             |
+
+## `@fuma-cli/interactive`
+
+The API of `FumadocsComponentInstaller` is unchanged, upgrade it together with `fuma-cli`.
