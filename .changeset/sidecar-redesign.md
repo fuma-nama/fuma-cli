@@ -12,3 +12,4 @@
 - The registry output is a manifest (`_registry.json`) and raw files, installing no longer needs a parser unless it merges.
 - Assets referenced as `new URL("./file", import.meta.url)` are installed and linked.
 - Installer: `plan()` & `apply()`, `registryAliases`, Rollup-style plugins with `resolveId`, `transform` and `writeBundle`. Route handlers are a built-in plugin.
+- `fuma-cli/registry/schema` exports types and `assertManifest()` instead of Zod schemas, `zod` is no longer a dependency.

@@ -1,3 +1,4 @@
+import typia from "@typia/unplugin/rolldown";
 import { defineConfig } from "tsdown";
 
 export default defineConfig({
@@ -8,12 +9,13 @@ export default defineConfig({
     "./src/macros/route-handler.ts",
     "./src/compiler/index.ts",
   ],
+  plugins: [typia()],
   format: "esm",
   dts: true,
   fixedExtension: false,
   target: "es2023",
   deps: {
-    onlyBundle: ["package-manager-detector"],
+    onlyBundle: ["package-manager-detector", "typia"],
   },
   exports: {
     enabled: true,
