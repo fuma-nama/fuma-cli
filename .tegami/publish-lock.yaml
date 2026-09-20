@@ -1,9 +1,9 @@
 core:changelogs:
-  - content: "---\npackages:\n  npm:fuma-cli:\n    type: patch\n---\n\n## Glob entries of components\n\n`entry` of a component accepts glob patterns. With `*` in the name, each matched file becomes its own component:\n\n```ts\nconst components: Registry[\"components\"] = {\n  icons: \"icons/*.tsx\",\n  \"icons/*\": { unlisted: true, entry: \"icons/*.tsx\" },\n};\n```\n\nPatterns of `files` are matched by [picomatch](https://github.com/micromatch/picomatch), compiled once per pattern.\n\n## `reuseUI` plugin\n\nA built-in installer plugin to use the UI components that consumer already has, exported from `fuma-cli/registry/installer`. Plugins can read `this.outDir`.\n\n## Catch mistakes of `files`\n\n- A pattern without globs fails the compilation when the file doesn't exist, like after a rename.\n- Two files of the same name installed to the same location by a rule without `target` fail the compilation.\n\n## `required` of `DependencyManager`\n\n`deps.required` and `deps.requiredDev` are the missing packages with their versions, no need to decode `deps.dependencies`.\n"
-    filename: 2026-09-21-glob-entries.md
+  - content: "---\npackages:\n  npm:fuma-cli:\n    type: patch\n---\n\n## Faster compilation\n\nEach file is resolved to its registry and rule once, compiling the registry of Fumadocs takes 9% less time. The output is unchanged.\n\n## `file.output` in `resolveId`\n\nThe `resolveId` hook of installer plugins receives the default location of file as `file.output`.\n\n## Link imports of `.mts` & `.mjs` files\n\nThe installer left the imports of installed `.mts` & `.mjs` files unlinked, they are now treated like other scripts.\n"
+    filename: 2026-09-21-faster-compile.md
     v: 0.0.0
-  - content: "---\npackages:\n  npm:@fuma-cli/interactive:\n    type: patch\n---\n\n## Rename to `InteractiveInstaller`\n\n`FumadocsComponentInstaller` is kept as a deprecated alias. The constructor accepts `io` to override the prompts.\n"
-    filename: 2026-09-21-interactive-installer.md
+  - content: "---\npackages:\n  npm:@fuma-cli/interactive:\n    type: patch\n---\n\n## Show relative paths\n\nThe override prompt and the progress of `InteractiveInstaller` show file paths relative to `cwd`, instead of absolute paths.\n"
+    filename: 2026-09-21-relative-paths.md
     v: 0.0.0
 core:packages:
   - id: npm:root
@@ -11,11 +11,11 @@ core:packages:
   - id: npm:docs
     updated: false
   - changelogIds:
-      - 2026-09-21-glob-entries.md
+      - 2026-09-21-faster-compile.md
     id: npm:fuma-cli
     updated: true
   - changelogIds:
-      - 2026-09-21-interactive-installer.md
+      - 2026-09-21-relative-paths.md
     id: npm:@fuma-cli/interactive
     updated: true
 npm:packages:
