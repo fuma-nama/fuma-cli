@@ -22,8 +22,10 @@ The stages and terms follow bundlers like [Rolldown](https://rolldown.rs), so th
 | **Link**     | `resolveId()` each import record, and decide its outcome, see [Imports](/compiler/imports).                  |
 | **Generate** | Replace import spans in the original text. The rest stays byte-identical, including comments and formatting. |
 
+[Tree-shaken](/compiler/sidecar#treeshake) modules do more in the same scan: import declarations are split per binding, and statements are analyzed. Generate only shifts their spans by the edits.
+
 - **Module**: an installable file. **External**: left to a package, or to the consumer.
-- Scanning is the only step that touches a parser, and it doesn't build an AST.
+- Scanning reads the import/export records of the analyzer, it doesn't walk the AST. Statements are only indexed for tree-shaken modules.
 - The export index of a package is built on first use.
 - There is no chunking: a component is only a named list of files.
 
@@ -48,38 +50,79 @@ registry/
       "target": "<dir>/card/index.tsx",
       "dependencies": { "acme-ui": "^1.2.0" },
       "imports": [
-        { "start": 24, "end": 37, "id": "acme-ui:button.tsx", "bindings": ["Button"] },
-        {
-          "start": 65,
-          "end": 79,
-          "id": "acme-ui:layout.tsx",
-          "bindings": ["Layout"],
-          "package": "acme-ui/layout"
-        }
+        { "start": 24, "id": "acme-ui:button.tsx" },
+        { "start": 65, "id": "acme-ui:layout.tsx", "package": "acme-ui/layout" }
       ]
     }
   }
 }
 ```
 
-- `imports` are the spans for installer to fill, so **installing needs no parser**.
-- `bindings` are the names taken from the imported file, omitted when the whole module is used.
+- `imports` are the positions for installer to fill, so **installing needs no parser**. Only a [merge](/installer#plan--apply) analyzes the file of consumer.
+- The file content has the `id` at `start`, or the `package` specifier when defined. No end position is stored.
+- `bindings` are the names taken from a [tree-shaken](/compiler/sidecar#treeshake) file, omitted otherwise, or when the whole module is used.
 - An import with `package` is a [preserved](/compiler/sidecar#preserve) one, the file content already contains the package specifier.
+- `stmtInfos` is defined for tree-shaken files, see [below](#statement-info).
 - The manifest has everything needed to link, file contents are only downloaded for files that get installed. Binary files are served as-is.
 - The schema is exported from `fuma-cli/registry/schema`.
 
+### Statement Info
+
+Modelled on `StmtInfo` of Rolldown, one entry per top-level statement of a tree-shaken file:
+
+```json
+{
+  "type": "lib",
+  "imports": [{ "start": 223, "id": "acme-ui:lib/format.ts", "bindings": ["trim"] }],
+  "stmtInfos": [
+    { "end": 14 },
+    { "end": 43, "declares": ["clsx"], "import": true, "dependencies": { "clsx": "^2.0.0" } },
+    { "end": 327, "declares": ["cn"], "references": [2, 3, 1] }
+  ]
+}
+```
+
+| Field                             | Description                                                                                  |
+| --------------------------------- | -------------------------------------------------------------------------------------------- |
+| `end`                             | It starts from the `end` of the last statement, with the comments and blank lines before it. |
+| `declares`                        | Top-level names and export names, `default` for the default export.                          |
+| `references`                      | Indices of the statements it needs.                                                          |
+| `import`                          | It is an import declaration.                                                                 |
+| `dependencies`, `devDependencies` | Packages imported by the statement. The file itself has none.                                |
+
+- Statements partition the file: selecting every statement gives back the whole file.
+- The installer starts from statements declaring a requested binding, or declaring nothing, and follows `references`.
+- An entry of `imports` belongs to the statement containing its span. Only imports of selected statements are followed.
+
 ## Toolchain
 
-Parsing is isolated in `compiler/scan.ts`, built on the module record of `oxc-parser`. Resolution uses `oxc-resolver`.
+| Task                      | Tool                                                       |
+| ------------------------- | ---------------------------------------------------------- |
+| Parsing & symbol analysis | [`yuku-analyzer`](https://yuku.fyi), in `utils/analyze.ts` |
+| Resolution                | `oxc-resolver`                                             |
 
-We evaluated [Yuku](https://yuku.fyi) (parser, analyzer & codegen) on 408 files of Fumadocs:
+One native toolchain covers every need: import/export records for scanning, resolved symbols for [statement info](#statement-info), and the AST for macros. The installer only loads it for a merge, a route handler, or a React Router config.
 
-| Task                                  | Time  |
-| ------------------------------------- | ----- |
-| `oxc-parser`, module record only      | 25 ms |
-| `oxc-parser`, with AST                | 85 ms |
-| `yuku-parser`                         | 58 ms |
-| `yuku-analyzer`, all files + `link()` | 90 ms |
+Measured on 318 files (1 MB) of Fumadocs:
 
-- **Codegen** cannot produce installed files: printing an unmodified AST changed 49% of lines in 188 files (blank lines, JSX & import wrapping). Installed code is meant to be read and diffed, so we edit spans of the original text.
-- **Analyzer** links exports across files natively, which replaces about 40 lines of `compiler/exports.ts`. It has no resolver, so `oxc-resolver` stays, and it would be a second native toolchain for that gain.
+| Task                                        | Time  |
+| ------------------------------------------- | ----- |
+| `oxc-parser`, module record                 | 27 ms |
+| `yuku-analyzer`, import/export records      | 21 ms |
+| `yuku-analyzer`, records + spans (our scan) | 26 ms |
+| `yuku-analyzer`, decoding top-level AST     | 61 ms |
+
+- Nodes are decoded lazily, so scanning reads records and only decodes the nodes it needs a span from.
+- **Codegen** is not used: printing an unmodified AST changed 49% of lines in 188 files (blank lines, JSX & import wrapping). Installed code is meant to be read and diffed, so we edit spans of the original text.
+
+### Resolver
+
+Yuku has no resolver. The compiler needs relative imports with extension probing (`./foo.js` to `foo.ts` included), `paths` of the nearest `tsconfig.json` with `extends` and `references`, and `imports` of `package.json`. Measured on the 1653 imports of the same files:
+
+| Resolver                     | Cold  | Warm  | Notes                                            |
+| ---------------------------- | ----- | ----- | ------------------------------------------------ |
+| `oxc-resolver`               | 59 ms | 3 ms  | Covers everything above.                         |
+| Own probing + `get-tsconfig` | 18 ms | 3 ms  | No `references` and `imports`, more code to own. |
+| `enhanced-resolve`           | 94 ms | 27 ms | No automatic `tsconfig.json` discovery.          |
+
+Most of the cold time of `oxc-resolver` is spent on packages in `node_modules`, which are external anyway. It is the only one that is complete without code of our own, so it stays.

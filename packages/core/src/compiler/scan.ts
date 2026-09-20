@@ -1,4 +1,7 @@
-import { parseSync } from "oxc-parser";
+import type { Import, Symbol } from "yuku-analyzer";
+import type { StmtInfo } from "@/registry/schema";
+import { analyzeFile } from "@/utils/analyze";
+import { scanStmts } from "./stmt";
 
 export type ImportKind = "import-statement" | "dynamic-import" | "new-url";
 
@@ -32,127 +35,141 @@ export interface ExportRecord {
 }
 
 export interface ScanResult {
+  /** differs from the input when tree-shaken */
+  code: string;
+  /** defined when tree-shaken */
+  stmts?: StmtInfo[];
   imports: ImportRecord[];
   exports: ExportRecord[];
 }
 
-const LANGS: Record<string, "js" | "jsx" | "ts" | "tsx" | undefined> = {
-  ".js": "js",
-  ".mjs": "js",
-  ".jsx": "jsx",
-  ".ts": "ts",
-  ".mts": "ts",
-  ".tsx": "tsx",
-};
-
-const NEW_URL = /new\s+URL\(\s*(["'])([^"']+)\1\s*,\s*$/;
+const EXTS = new Set([".js", ".mjs", ".jsx", ".ts", ".mts", ".tsx"]);
 
 export function isScannable(ext: string): boolean {
-  return ext in LANGS;
+  return EXTS.has(ext);
 }
 
 /**
- * The only place that touches a parser: it reads the module record without materializing the AST.
+ * It reads the import & export records of analyzer, AST nodes are only decoded for their spans.
+ *
+ * @param treeshake - rewrite import declarations to have one binding each, and analyze statements
  */
-export function scan(filePath: string, ext: string, code: string): ScanResult {
-  const result = parseSync(filePath, code, { lang: LANGS[ext] });
-  if (result.errors.length > 0) {
-    throw new Error(
-      `failed to parse ${filePath}:\n${result.errors.map((e) => e.message).join("\n")}`,
-    );
-  }
-
-  const { staticImports, staticExports, dynamicImports, importMetas } = result.module;
+export function scan(file: string, code: string, treeshake = false): ScanResult {
+  const module = analyzeFile(file, code);
   // specifier start -> import
   const imports = new Map<number, ImportRecord>();
   const exports: ExportRecord[] = [];
+  const importOf = new Map<Symbol, Import>();
 
-  for (const item of staticImports) {
-    const bindings: ImportedBinding[] = [];
-    const names: string[] = [];
-
-    for (const entry of item.entries) {
-      const imported =
-        entry.importName.kind === "Name"
-          ? entry.importName.name!
-          : entry.importName.kind === "Default"
-            ? "default"
-            : "*";
-      names.push(imported);
-      bindings.push({ imported, local: entry.localName.value, isType: entry.isType });
+  /** @param name - `undefined` for the whole module */
+  function addImport(
+    kind: ImportKind,
+    source: { start: number; end: number },
+    name?: string,
+  ): ImportRecord {
+    let record = imports.get(source.start);
+    if (!record) {
+      const start = source.start + 1;
+      const end = source.end - 1;
+      record = { kind, specifier: code.slice(start, end), start, end, bindings: [] };
+      imports.set(source.start, record);
     }
 
-    imports.set(item.moduleRequest.start, {
-      kind: "import-statement",
-      specifier: item.moduleRequest.value,
-      start: item.moduleRequest.start + 1,
-      end: item.moduleRequest.end - 1,
-      declaration: { start: item.start, end: item.end, bindings },
-      bindings: names.length > 0 && !names.includes("*") ? names : undefined,
+    if (name === undefined || name === "*") record.bindings = undefined;
+    else record.bindings?.push(name);
+    return record;
+  }
+
+  for (const item of module.imports) {
+    const { node } = item;
+    if (node.type === "ImportExpression") {
+      addImport("dynamic-import", node.source);
+      continue;
+    }
+
+    const declaration = item.isSideEffect ? node : module.parentOf(node);
+    if (declaration?.type !== "ImportDeclaration") continue;
+    const imported = item.isSideEffect ? undefined : (item.name ?? "*");
+    const record = addImport("import-statement", declaration.source, imported);
+    record.declaration ??= { start: declaration.start, end: declaration.end, bindings: [] };
+    if (imported === undefined) continue;
+
+    importOf.set(item.local!, item);
+    record.declaration.bindings.push({
+      imported,
+      local: item.local!.name,
+      isType: item.typeOnly,
     });
   }
 
-  for (const item of staticExports) {
-    for (const entry of item.entries) {
-      const name =
-        entry.exportName.kind === "Name"
-          ? entry.exportName.name!
-          : entry.exportName.kind === "Default"
-            ? "default"
-            : "*";
-      const request = entry.moduleRequest;
-      if (!request) {
-        exports.push({ name });
-        continue;
-      }
+  if (treeshake) {
+    let out = "";
+    let last = 0;
+    for (const { start, declaration } of imports.values()) {
+      if (!declaration || declaration.bindings.length < 2) continue;
+      const from = ` from ${code.slice(start - 1, declaration.end)}`;
+      out += code.slice(last, declaration.start);
+      last = declaration.end;
 
-      const fromName = entry.importName.kind === "Name" ? entry.importName.name! : "*";
-      exports.push({ name, from: { specifier: request.value, name: fromName } });
-
-      // `import { a } from "x"; export { a }` shares the span of its import
-      const existing = imports.get(request.start);
-      if (!existing) {
-        imports.set(request.start, {
-          kind: "import-statement",
-          specifier: request.value,
-          start: request.start + 1,
-          end: request.end - 1,
-          bindings: fromName === "*" ? undefined : [fromName],
-        });
-      } else if (!existing.declaration) {
-        if (fromName === "*") existing.bindings = undefined;
-        else existing.bindings?.push(fromName);
+      for (let i = 0; i < declaration.bindings.length; i++) {
+        const { imported, local, isType } = declaration.bindings[i];
+        let clause = local;
+        if (imported === "*") clause = `* as ${local}`;
+        else if (imported !== "default") {
+          clause = imported === local ? `{ ${local} }` : `{ ${imported} as ${local} }`;
+        }
+        out += `${i > 0 ? "\n" : ""}import ${isType ? "type " : ""}${clause}${from}`;
       }
     }
+    if (last > 0) return scan(file, out + code.slice(last), true);
   }
 
-  for (const item of dynamicImports) {
-    const { start, end } = item.moduleRequest;
-    const quote = code[start];
-    if ((quote !== '"' && quote !== "'") || code[end - 1] !== quote) continue;
+  for (const item of module.exports) {
+    const name = item.isStar ? "*" : item.name!;
+    if (item.specifier === null) {
+      // `import { a } from "x"; export { a }`
+      const origin = item.local && importOf.get(item.local);
+      exports.push(
+        origin
+          ? { name, from: { specifier: origin.specifier, name: origin.name ?? "*" } }
+          : { name },
+      );
+      continue;
+    }
 
-    imports.set(start, {
-      kind: "dynamic-import",
-      specifier: code.slice(start + 1, end - 1),
-      start: start + 1,
-      end: end - 1,
-    });
+    const fromName = item.fromName ?? "*";
+    const declaration =
+      item.node.type === "ExportAllDeclaration" ? item.node : module.parentOf(item.node);
+    exports.push({ name, from: { specifier: item.specifier, name: fromName } });
+    if (
+      declaration?.type === "ExportAllDeclaration" ||
+      declaration?.type === "ExportNamedDeclaration"
+    )
+      addImport("import-statement", declaration.source!, fromName);
   }
 
   // new URL("./file", import.meta.url)
-  for (const meta of importMetas) {
-    if (!code.startsWith(".url", meta.end)) continue;
-    const match = NEW_URL.exec(code.slice(Math.max(0, meta.start - 256), meta.start));
-    if (!match) continue;
-
-    const end = meta.start - (match[0].length - match[0].lastIndexOf(match[1]));
-    imports.set(end, {
-      kind: "new-url",
-      specifier: match[2],
-      start: end - match[2].length,
-      end,
+  if (module.moduleFlags.usesImportMeta) {
+    module.walk({
+      NewExpression({ callee, arguments: [url, base] }) {
+        if (
+          callee.type === "Identifier" &&
+          callee.name === "URL" &&
+          url?.type === "Literal" &&
+          typeof url.value === "string" &&
+          base?.type === "MemberExpression" &&
+          base.object.type === "MetaProperty"
+        ) {
+          addImport("new-url", url);
+        }
+      },
     });
   }
 
-  return { imports: Array.from(imports.values()), exports };
+  return {
+    code,
+    stmts: treeshake ? scanStmts(module, code) : undefined,
+    imports: Array.from(imports.values()),
+    exports,
+  };
 }

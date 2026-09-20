@@ -42,7 +42,7 @@ if (deps.hasRequired()) await deps.installRequired(); // runs detected package m
 const plan = await installer.plan([{ name: "button" }, { name: "chart", registry: "acme/charts" }]);
 
 for (const file of plan.files) {
-  // "create" | "overwrite" | "unchanged"
+  // "create" | "overwrite" | "merge" | "unchanged"
   console.log(file.status, file.output);
 }
 
@@ -51,6 +51,19 @@ await installer.apply(plan);
 
 - `plan()` links the components against the consumer's codebase, and downloads the files to install. Nothing is written.
 - `apply()` writes the files, asking `io.confirmFileOverride()` for the ones with `overwrite` status.
+
+| Status      | Meaning                                                                                       |
+| ----------- | --------------------------------------------------------------------------------------------- |
+| `create`    | The file doesn't exist.                                                                       |
+| `overwrite` | The file exists with different content.                                                       |
+| `merge`     | A [tree-shaken](/compiler/sidecar#treeshake) file exists, and lacks some declarations in use. |
+| `unchanged` | Nothing to write.                                                                             |
+
+A merge only adds code, so it needs no confirmation:
+
+- Statements are skipped when the file already declares one of their names, along with what only they reference.
+- Imports are inserted after the last import, other statements are appended.
+- Statements that declare nothing, like `"use client"`, are only written when the file is created.
 
 Route handlers are installed by a built-in plugin, using the same hooks available to you.
 

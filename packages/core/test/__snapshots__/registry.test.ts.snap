@@ -57,10 +57,7 @@ exports[`compile 1`] = `
     "button.tsx": {
       "imports": [
         {
-          "bindings": [
-            "cn",
-          ],
-          "end": 34,
+          "bindings": undefined,
           "id": "ui:utils/cn.ts",
           "start": 20,
         },
@@ -76,33 +73,23 @@ exports[`compile 1`] = `
       },
       "imports": [
         {
-          "bindings": [
-            "Button",
-          ],
-          "end": 119,
+          "bindings": undefined,
           "id": "ui:button.tsx",
           "start": 106,
         },
         {
-          "bindings": [
-            "Layout",
-          ],
-          "end": 258,
+          "bindings": undefined,
           "id": "ui:layout.tsx",
           "package": "acme-ui/layout",
           "start": 244,
         },
         {
-          "bindings": [
-            "Title",
-          ],
-          "end": 301,
+          "bindings": undefined,
           "id": "ui:card/parts.tsx",
           "start": 284,
         },
         {
           "bindings": undefined,
-          "end": 378,
           "id": "ui:button.tsx",
           "start": 365,
         },
@@ -117,10 +104,7 @@ exports[`compile 1`] = `
     "chat.ts": {
       "imports": [
         {
-          "bindings": [
-            "cn",
-          ],
-          "end": 97,
+          "bindings": undefined,
           "id": "ui:utils/cn.ts",
           "start": 83,
         },
@@ -143,7 +127,6 @@ exports[`compile 1`] = `
       "imports": [
         {
           "bindings": undefined,
-          "end": 172,
           "id": "ui:og/font.ttf",
           "start": 158,
         },
@@ -200,26 +183,17 @@ exports[`compile 3`] = `
       },
       "imports": [
         {
-          "bindings": [
-            "cn",
-          ],
-          "end": 34,
+          "bindings": undefined,
           "id": "ui:utils/cn.ts",
           "start": 20,
         },
         {
-          "bindings": [
-            "Button",
-          ],
-          "end": 74,
+          "bindings": undefined,
           "id": "ui:button.tsx",
           "start": 61,
         },
         {
-          "bindings": [
-            "Layout",
-          ],
-          "end": 115,
+          "bindings": undefined,
           "id": "ui:layout.tsx",
           "package": "acme-ui/layout",
           "start": 101,
@@ -257,5 +231,261 @@ import { Layout } from "./layouts/layout";
 import "acme-ui/style.css";
 
 export const Badge = () => cn(Button, Layout);
+"
+`;
+
+exports[`treeshake: compile 1`] = `
+""use client";
+import { clsx } from "clsx";
+import type { ClassValue } from "clsx";
+import { twMerge } from "tailwind-merge";
+import type { Ref } from "react";
+import type { RefCallback } from "react";
+import { trim } from "shake:lib/format.ts";
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+
+// matches a single trailing slash
+const TRAILING_SLASH = /\\/$/;
+
+function normalize(url: string) {
+  return url.replace(TRAILING_SLASH, "");
+}
+
+/**
+ * Whether \`url\` is the current page.
+ */
+export function isActive(url: string, pathname: string) {
+  return normalize(url) === normalize(pathname);
+}
+
+export function mergeRefs<T>(...refs: Ref<T>[]): RefCallback<T> {
+  return (value) => {
+    for (const ref of refs) {
+      if (typeof ref === "function") ref(value);
+      else if (ref) ref.current = value;
+    }
+  };
+}
+
+export function label(text: string) {
+  return trim(text);
+}
+"
+`;
+
+exports[`treeshake: compile 2`] = `
+{
+  "imports": [
+    {
+      "bindings": undefined,
+      "id": "shake:lib/format.ts",
+      "start": 223,
+    },
+  ],
+  "stmtInfos": [
+    {
+      "end": 13,
+    },
+    {
+      "declares": [
+        "clsx",
+      ],
+      "dependencies": {
+        "clsx": "^2.0.0",
+      },
+      "end": 42,
+      "import": true,
+    },
+    {
+      "declares": [
+        "ClassValue",
+      ],
+      "dependencies": {
+        "clsx": "^2.0.0",
+      },
+      "end": 82,
+      "import": true,
+    },
+    {
+      "declares": [
+        "twMerge",
+      ],
+      "dependencies": {
+        "tailwind-merge": "^3.0.0",
+      },
+      "end": 124,
+      "import": true,
+    },
+    {
+      "declares": [
+        "Ref",
+      ],
+      "devDependencies": {
+        "@types/react": "^19.0.0",
+      },
+      "end": 158,
+      "import": true,
+    },
+    {
+      "declares": [
+        "RefCallback",
+      ],
+      "devDependencies": {
+        "@types/react": "^19.0.0",
+      },
+      "end": 200,
+      "import": true,
+    },
+    {
+      "declares": [
+        "trim",
+      ],
+      "end": 244,
+      "import": true,
+    },
+    {
+      "declares": [
+        "cn",
+      ],
+      "end": 325,
+      "references": [
+        2,
+        3,
+        1,
+      ],
+    },
+    {
+      "declares": [
+        "TRAILING_SLASH",
+      ],
+      "end": 391,
+    },
+    {
+      "declares": [
+        "normalize",
+      ],
+      "end": 470,
+      "references": [
+        8,
+      ],
+    },
+    {
+      "declares": [
+        "isActive",
+      ],
+      "end": 626,
+      "references": [
+        9,
+      ],
+    },
+    {
+      "declares": [
+        "mergeRefs",
+      ],
+      "end": 848,
+      "references": [
+        4,
+        5,
+      ],
+    },
+    {
+      "declares": [
+        "label",
+      ],
+      "end": 911,
+      "references": [
+        6,
+      ],
+    },
+  ],
+  "type": "lib",
+}
+`;
+
+exports[`treeshake: create, merge, unchanged 1`] = `
+""use client";
+
+// matches a single trailing slash
+const TRAILING_SLASH = /\\/$/;
+
+function normalize(url: string) {
+  return url.replace(TRAILING_SLASH, "");
+}
+
+/**
+ * Whether \`url\` is the current page.
+ */
+export function isActive(url: string, pathname: string) {
+  return normalize(url) === normalize(pathname);
+}
+"
+`;
+
+exports[`treeshake: create, merge, unchanged 2`] = `
+""use client";
+import { clsx } from "clsx";
+import type { ClassValue } from "clsx";
+import { twMerge } from "tailwind-merge";
+import type { Ref } from "react";
+import type { RefCallback } from "react";
+import { trim } from "./format";
+
+// matches a single trailing slash
+const TRAILING_SLASH = /\\/$/;
+
+function normalize(url: string) {
+  return url.replace(TRAILING_SLASH, "");
+}
+
+/**
+ * Whether \`url\` is the current page.
+ */
+export function isActive(url: string, pathname: string) {
+  return normalize(url) === normalize(pathname);
+}
+
+export const mine = true;
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+
+export function mergeRefs<T>(...refs: Ref<T>[]): RefCallback<T> {
+  return (value) => {
+    for (const ref of refs) {
+      if (typeof ref === "function") ref(value);
+      else if (ref) ref.current = value;
+    }
+  };
+}
+
+export function label(text: string) {
+  return trim(text);
+}
+"
+`;
+
+exports[`treeshake: keep declarations of consumer 1`] = `
+"import type { Ref } from "react";
+import type { RefCallback } from "react";
+import { trim } from "./format";
+
+export const cn = (...v: string[]) => v.join(" ");
+
+export function mergeRefs<T>(...refs: Ref<T>[]): RefCallback<T> {
+  return (value) => {
+    for (const ref of refs) {
+      if (typeof ref === "function") ref(value);
+      else if (ref) ref.current = value;
+    }
+  };
+}
+
+export function label(text: string) {
+  return trim(text);
+}
 "
 `;

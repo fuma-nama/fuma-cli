@@ -10,7 +10,10 @@ export interface ComponentInfo {
 }
 
 export type InstallInfo =
-  | (DistributiveOmit<ManifestFile, "imports" | "dependencies" | "devDependencies"> & {
+  | (DistributiveOmit<
+      ManifestFile,
+      "imports" | "stmtInfos" | "dependencies" | "devDependencies"
+    > & {
       /**
        * The component this file belongs to, pass an object on one of its files to describe the component.
        *
@@ -23,6 +26,10 @@ export type InstallInfo =
        * The file must be reachable from an export of its package.
        */
       preserve?: boolean;
+      /**
+       * Install the file per declaration: only the bindings imported by installed files, merged into the file if the consumer already has it.
+       */
+      treeshake?: boolean;
     })
   | {
       /** resolve imports of this file to another installable file, as an import specifier relative to the sidecar */

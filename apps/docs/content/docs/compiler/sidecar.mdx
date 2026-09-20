@@ -36,6 +36,7 @@ export default defineInstall({
 | `route`     | For `route-handler` only, see [Macro](/macros).                                              |
 | `component` | The component it belongs to.                                                                 |
 | `preserve`  | Prefer the package import, see [below](#preserve).                                           |
+| `treeshake` | Install only the declarations in use, see [below](#treeshake).                               |
 | `alias`     | Install another file instead, see [below](#alias).                                           |
 
 ### `component`
@@ -92,6 +93,36 @@ When another file imports it:
 - Unless the layout is part of the installation, or the consumer has installed it before. The import then points to the local file.
 
 It falls back to a normal file when the package doesn't export the imported names.
+
+### `treeshake`
+
+For files of many independent utilities, like `utils.ts`. The file is installed per declaration instead of as a whole.
+
+```ts title="lib/utils.install.ts"
+export default defineInstall({
+  type: "lib",
+  treeshake: true,
+});
+```
+
+Given `utils.ts` exports `cn`, `isActive` and `mergeRefs`, installing a component that imports `isActive` writes:
+
+- `isActive`, with its comments.
+- The private helpers and imports it references, and the dependencies of those imports only.
+- Statements that declare nothing, like `"use client"` and side effects.
+
+| The consumer's `lib/utils.ts`  | Result                                                     |
+| ------------------------------ | ---------------------------------------------------------- |
+| Doesn't exist                  | Created with the declarations in use.                      |
+| Exists                         | Missing declarations are [merged](/installer#plan--apply). |
+| Already declares the same name | Their declaration is kept, yours is not added.             |
+
+A namespace import, dynamic import, or `component` of the file takes all of it.
+
+<Callout title="Import declarations are split">
+  The compiled file has one binding per import declaration, so that an import can be installed on
+  its own.
+</Callout>
 
 ### `alias`
 

@@ -1,14 +1,17 @@
 import path from "node:path";
 import fs from "node:fs";
+import { findPackageJSON } from "node:module";
 import { pathToFileURL } from "node:url";
 import { ResolverFactory } from "oxc-resolver";
 import { MACRO_PATH } from "@/constants";
-import { encodeFileId, type Manifest, type ManifestFile } from "@/registry/schema";
+import { encodeFileId } from "@/registry/id";
+import type { Manifest, ManifestFile } from "@/registry/schema";
 import type { PackageJson } from "@/types";
 import { findNearestPackageJson } from "@/utils/fs";
 import { buildExportIndex, type ExportIndex, nameKey } from "./exports";
 import type { InstallInfo, Registry } from "./registry";
 import { type ImportRecord, isScannable, scan, type ScanResult } from "./scan";
+import { stmtAt } from "./stmt";
 
 export interface CompileOptions {
   root: Registry;
@@ -41,6 +44,7 @@ interface Module {
   /** relative to registry dir */
   path: string;
   preserve: boolean;
+  treeshake: boolean;
   edits: Edit[];
   output: ManifestFile;
 }
@@ -77,10 +81,11 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
   const modules = new Map<string, Module>();
   /** file -> the specifier of file installed in place of it, and where to resolve it from */
   const aliases = new Map<string, { specifier: string; importer: string }>();
-  const scanned = new Map<string, (ScanResult & { code: string }) | undefined>();
+  const scanned = new Map<string, ScanResult | undefined>();
   const errors: string[] = [];
   const resolver = new ResolverFactory({
     extensions: [...SOURCE_EXTS, ".node"],
+    extensionAlias: { ".js": [".ts", ".tsx", ".js"], ".jsx": [".tsx", ".jsx"] },
     conditionNames: ["node", "import", "require", "default", "types"],
     tsconfig: "auto",
   });
@@ -89,12 +94,9 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
 
   function scanFile(file: string) {
     if (scanned.has(file)) return scanned.get(file);
-    const ext = path.extname(file);
-    let out: (ScanResult & { code: string }) | undefined;
-    if (isScannable(ext)) {
-      const code = fs.readFileSync(file, "utf-8");
-      out = Object.assign(scan(file, ext, code), { code });
-    }
+    const out = isScannable(path.extname(file))
+      ? scan(file, fs.readFileSync(file, "utf-8"), modules.get(file)?.treeshake)
+      : undefined;
     scanned.set(file, out);
     return out;
   }
@@ -105,7 +107,11 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
       return;
     }
 
-    const { component, preserve = false, ...output } = info;
+    const { component, preserve = false, treeshake = false, ...output } = info;
+    if (treeshake && !isScannable(path.extname(file))) {
+      errors.push(`${file}: only scripts can be tree-shaken`);
+    }
+
     const relative = toPosix(path.relative(registry.dir, file));
     const module: Module = {
       id: encodeFileId(registry.registry.name, relative),
@@ -113,6 +119,7 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
       file,
       path: relative,
       preserve,
+      treeshake,
       edits: [],
       output,
     };
@@ -326,7 +333,8 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
     );
   }
 
-  function addDependency(module: Module, name: string) {
+  /** @param pos - position of the import, tree-shaken modules carry dependencies on statements */
+  function addDependency(module: Module, name: string, pos: number) {
     const { registry, packageJson, dir } = module.registry;
     let version: string | null | undefined;
 
@@ -342,8 +350,12 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
       if (pkg) version = `^${pkg.version}`;
       // protocols of package manager like `workspace:`
       else if (version?.includes(":")) {
-        const { path: file } = resolver.sync(dir, `${name}/package.json`);
-        version = file ? `^${JSON.parse(fs.readFileSync(file, "utf-8")).version}` : null;
+        try {
+          const file = findPackageJSON(name, pathToFileURL(dir + path.sep))!;
+          version = `^${JSON.parse(fs.readFileSync(file, "utf-8")).version}`;
+        } catch {
+          version = null;
+        }
       }
     }
 
@@ -356,7 +368,8 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
       version = null;
     }
 
-    const { output } = module;
+    const stmts = scanFile(module.file)?.stmts;
+    const output = stmts ? stmts[stmtAt(stmts, pos)] : module.output;
     if (name.startsWith("@types/")) (output.devDependencies ??= {})[name] = version;
     else (output.dependencies ??= {})[name] = version;
   }
@@ -380,7 +393,7 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
     }
 
     if (resolved.external) {
-      if (record.kind !== "new-url") addDependency(module, resolved.id);
+      if (record.kind !== "new-url") addDependency(module, resolved.id, start);
       return;
     }
 
@@ -392,7 +405,12 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
     if (swap.specifier === undefined && (target || swap.declaration === undefined)) {
       const local = target ?? inherit(module, resolved.id);
       if (local) {
-        module.edits.push({ start, end, text: local.id, link: { id: local.id, bindings } });
+        module.edits.push({
+          start,
+          end,
+          text: local.id,
+          link: { id: local.id, bindings: local.treeshake ? bindings : undefined },
+        });
         return;
       }
 
@@ -404,13 +422,17 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
       return;
     }
 
-    addDependency(module, resolved.registry.packageJson.name!);
+    addDependency(module, resolved.registry.packageJson.name!, start);
     if (swap.specifier !== undefined) {
       module.edits.push({
         start,
         end,
         text: swap.specifier,
-        link: target && { id: target.id, bindings, package: swap.specifier },
+        link: target && {
+          id: target.id,
+          bindings: target.treeshake ? bindings : undefined,
+          package: swap.specifier,
+        },
       });
     } else {
       const { start, end } = record.declaration!;
@@ -422,12 +444,13 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
 
   function render(module: Module) {
     const { registry, file, edits, output } = module;
-    const code = scanFile(file)?.code;
-    if (code === undefined) {
+    const scanned = scanFile(file);
+    if (!scanned) {
       registry.output.files.set(module.path, fs.readFileSync(file));
       return;
     }
 
+    const { code, stmts } = scanned;
     edits.sort((a, b) => a.start - b.start);
     let out = "";
     let last = 0;
@@ -437,13 +460,24 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
         (output.imports ??= []).push({
           ...edit.link,
           start: out.length,
-          end: out.length + edit.text.length,
         });
       }
       out += edit.text;
       last = edit.end;
     }
     registry.output.files.set(module.path, out + code.slice(last));
+    if (!stmts) return;
+
+    // edits are inside statements
+    let delta = 0;
+    let i = 0;
+    for (const stmt of stmts) {
+      for (; i < edits.length && edits[i].start < stmt.end; i++) {
+        delta += edits[i].text.length - (edits[i].end - edits[i].start);
+      }
+      stmt.end += delta;
+    }
+    output.stmtInfos = stmts;
   }
 
   const output = await scanRegistry(root);
