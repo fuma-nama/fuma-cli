@@ -1,0 +1,135 @@
+---
+title: Sidecar
+description: Describe how a file is installed, next to the file.
+---
+
+## Convention
+
+`<name>.install.ts` describes the sibling named `<name>`, or `<name>` with a `.tsx`, `.ts`, `.jsx` or `.js` extension.
+
+| Sidecar                 | Describes        |
+| ----------------------- | ---------------- |
+| `button.install.ts`     | `button.tsx`     |
+| `mono.ttf.install.ts`   | `mono.ttf`       |
+| `card/index.install.ts` | `card/index.tsx` |
+
+```ts title="card/index.install.ts"
+import { defineInstall } from "fuma-cli/compiler";
+
+export default defineInstall({
+  type: "components",
+  target: "<dir>/card/index.tsx",
+  component: {
+    name: "card",
+    title: "Card",
+    description: "A container with header & footer",
+  },
+});
+```
+
+## Options
+
+| Option      | Description                                                                                  |
+| ----------- | -------------------------------------------------------------------------------------------- |
+| `type`      | `components`, `ui`, `lib`, `css`, `layout` or `route-handler`. Decides the output directory. |
+| `target`    | Output path, `<dir>` refers to the directory of `type`. Defaults to `<dir>/<file name>`.     |
+| `route`     | For `route-handler` only, see [Macro](/macros).                                              |
+| `component` | The component it belongs to.                                                                 |
+| `preserve`  | Prefer the package import, see [below](#preserve).                                           |
+| `treeshake` | Install only the declarations in use, see [below](#treeshake).                               |
+| `alias`     | Install another file instead, see [below](#alias).                                           |
+
+### `component`
+
+A component is a named set of files that consumers can ask for. Pass an object on one of its files to describe it, and the name on the others:
+
+```ts title="card/footer.install.ts"
+export default defineInstall({
+  type: "components",
+  target: "<dir>/card/footer.tsx",
+  component: "card",
+});
+```
+
+| Field         | Description                                   |
+| ------------- | --------------------------------------------- |
+| `name`        | Used to install the component.                |
+| `title`       | Display name.                                 |
+| `description` | Short description.                            |
+| `unlisted`    | Hide from component lists, still installable. |
+
+Without `component`, the file is only installed when another file imports it. Good for shared utilities like `cn`.
+
+### Inherited Files
+
+A file without sidecar is installed along its importer, when it is **in the same directory or below**. It takes the `type` of importer, and keeps its relative location.
+
+```
+card/
+  index.tsx          <- card/index.install.ts, target: <dir>/card/index.tsx
+  parts.tsx          <- installed to <dir>/card/parts.tsx
+  icons/close.tsx    <- installed to <dir>/card/icons/close.tsx
+```
+
+This includes assets referenced as `new URL("./font.ttf", import.meta.url)`.
+
+Other imports without sidecar must be [exported by your package](/compiler/imports), otherwise the compilation fails.
+
+### `preserve`
+
+For files that are both installable and exported by your package, like layouts.
+
+```ts title="layouts/docs.install.ts"
+export default defineInstall({
+  type: "layout",
+  component: "layouts/docs",
+  preserve: true,
+});
+```
+
+When another file imports it:
+
+- The installed code imports `acme-ui/layouts/docs`, the layout is **not** installed.
+- Unless the layout is part of the installation, or the consumer has installed it before. The import then points to the local file.
+
+It falls back to a normal file when the package doesn't export the imported names.
+
+### `treeshake`
+
+For files of many independent utilities, like `utils.ts`. The file is installed per declaration instead of as a whole.
+
+```ts title="lib/utils.install.ts"
+export default defineInstall({
+  type: "lib",
+  treeshake: true,
+});
+```
+
+Given `utils.ts` exports `cn`, `isActive` and `mergeRefs`, installing a component that imports `isActive` writes:
+
+- `isActive`, with its comments.
+- The private helpers and imports it references, and the dependencies of those imports only.
+- Statements that declare nothing, like `"use client"` and side effects.
+
+| The consumer's `lib/utils.ts`  | Result                                                     |
+| ------------------------------ | ---------------------------------------------------------- |
+| Doesn't exist                  | Created with the declarations in use.                      |
+| Exists                         | Missing declarations are [merged](/installer#plan--apply). |
+| Already declares the same name | Their declaration is kept, yours is not added.             |
+
+A namespace import, dynamic import, or `component` of the file takes all of it.
+
+<Callout title="Import declarations are split">
+  The compiled file has one binding per import declaration, so that an import can be installed on
+  its own.
+</Callout>
+
+### `alias`
+
+Resolve every import of this file to another installable file, the specifier is resolved like an import written in the sidecar. Use it to dedupe copies of the same utility across packages.
+
+```ts title="packages/charts/src/cn.install.ts"
+export default defineInstall({
+  alias: "../../ui/src/utils/cn",
+});
+```

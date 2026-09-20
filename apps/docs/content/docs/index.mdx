@@ -5,28 +5,28 @@ description: Build your own Shadcn CLI.
 
 Fuma CLI is a toolkit for building **your own [shadcn/ui](https://ui.shadcn.com)-style CLI**.
 
-- Compiles registries (your components, hooks, and shared files) into installable JSON bundles
-- Provides an installer that install & adopt component files into consumer's codebase.
+- The compiler turns your source files into a registry: a manifest plus the raw files.
+- The installer links files against the consumer's codebase and writes them.
 
 ## Why Fuma CLI
 
-Fuma CLI addresses a few problems when maintaing larger registries:
+Fuma CLI addresses a few problems when maintaining larger registries:
 
-- **Automatic sub-components and file references**: The compiler checks all TypeScript imports and handle component dependencies. Without maintaining every edge manually, your component will always be installed correctly and predictably.
-- **Monorepo-friendly**: Split registries across workspaces; Native support for **sub-registries** and cross-registry references.
-- **Avoid Duplication**: With macros, the same file can be installed for multiple frameworks.
+- **No edge to maintain**: the compiler reads the imports of each file. Referenced files are installed along, referenced packages become dependencies.
+- **Colocated**: a file is made installable by a [sidecar](/compiler/sidecar) next to it, there is no central list of files.
+- **Works with published packages**: when a file imports something your package already exports, the installed code imports it from the package. The compiler verifies every name it rewrites.
+- **Monorepo-friendly**: split registries across workspaces, with cross-registry references.
+- **Avoid duplication**: with macros, the same file can be installed for multiple frameworks.
 
-Same as **Shadcn CLI**, it ships code that adopts to consumer's codebase, allowing full control over the installed code.
+Same as **Shadcn CLI**, it ships code that adapts to the consumer's codebase, allowing full control over the installed code.
 What is different:
 
-- **Distribution**: Your registry will be consumed through your own CLI tool rather than `shadcn` CLI.
-- **More Control**: You will have more control on the installer, e.g. transform file contents when installing components.
+- **Distribution**: your registry is consumed through your own CLI tool rather than the `shadcn` CLI.
+- **More control**: you own the installer, e.g. reuse files the consumer already has, or transform contents on install.
 
 ## How it works
 
-The distribution flow as follows:
-
-1. Define registry & components in your repo.
-2. Compile registry with Fuma CLI to produce bundled files.
-3. Serve the bundled files via CDNs/Web.
-4. In your CLI package, install the components using Fuma CLI installer.
+1. Add sidecars to the files you want to be installable.
+2. Compile the registry with Fuma CLI.
+3. Serve the output via CDNs/Web.
+4. In your CLI package, install components using the Fuma CLI installer.

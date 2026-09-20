@@ -1,0 +1,115 @@
+---
+title: Fuma CLI v2
+description: A redesign around files and sidecars.
+date: 2026-09-20
+authors: [fuma]
+tags: [release]
+---
+
+v1 asked you to describe your registry twice: once in the source code, and once in a central list of components, files and hooks that had to agree with it. v2 removes the list. The source code is the registry.
+
+## Sidecars
+
+A file becomes installable by adding a [sidecar](/compiler/sidecar) next to it. There is nothing else to register.
+
+```ts title="src/card/index.install.ts"
+import { defineInstall } from "fuma-cli/compiler";
+
+export default defineInstall({
+  type: "components",
+  component: { name: "card", title: "Card" },
+});
+```
+
+- The compiler scans `dir` for sidecars, and follows the imports of each file.
+- Files in the same directory or below are [inherited](/compiler/sidecar#inherited-files), including assets referenced as `new URL("./font.ttf", import.meta.url)`.
+- A component is only a named list of files. The rule of v1 that a file cannot belong to two components is gone, along with chunking.
+
+## Package Imports Without Hooks
+
+Installed code often imports things that must stay in your package, like React contexts. v1 needed `onParseReference`, `onUnknownFile` and `isExternal` to express that.
+
+v2 reads `exports` of your `package.json`, follows the re-exports of each entry, and [rewrites the import](/compiler/imports#package-imports) when every name is publicly available:
+
+```tsx
+// source
+import { useTheme, type Theme } from "../theme";
+// installed
+import { useAcmeTheme as useTheme, type Theme } from "acme-ui";
+```
+
+An import that can neither be installed nor rewritten fails the compilation, so a registry never ships an import your package doesn't satisfy.
+
+Two sidecar options cover the remaining cases:
+
+| Option                                   | Use it for                                                                                                       |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| [`preserve`](/compiler/sidecar#preserve) | Files both installable and exported, like layouts. Imported from the package unless the consumer installed them. |
+| [`alias`](/compiler/sidecar#alias)       | Copies of the same utility across packages, installed once.                                                      |
+
+## Tree-Shaking
+
+A `utils.ts` with twenty helpers no longer lands in the consumer's project because one component needs `cn`.
+
+```ts title="src/lib/utils.install.ts"
+export default defineInstall({ type: "lib", treeshake: true });
+```
+
+- Only the imported declarations are installed, with their private helpers, imports, comments, and the dependencies of those imports.
+- When the consumer already has the file, missing declarations are **merged** in. Their own declarations and edits are kept, and no confirmation is asked.
+
+See [`treeshake`](/compiler/sidecar#treeshake).
+
+## A New Output Format
+
+v1 wrote one JSON per component with file contents inside. v2 writes a manifest and the raw files:
+
+```
+registry/
+  _registry.json
+  files/button.tsx
+```
+
+- The manifest records where each import is, so **installing needs no parser**. Imports are linked by replacing spans, the rest of your code is byte-identical to the source.
+- Installing fetches the manifest, then every needed file in parallel, regardless of how deep the imports go.
+- Files shared by many components are stored once.
+
+Details in [Internals](/compiler/advanced#output).
+
+## Installer
+
+- [`plan()` & `apply()`](/installer#plan--apply): inspect the files and their status (`create`, `overwrite`, `merge`, `unchanged`) before anything is written.
+- [Plugins](/installer/plugins) follow the shape of Rollup plugins: `resolveId`, `transform` and `writeBundle`. Route handlers are now a built-in plugin using the same hooks.
+- [`registryAliases`](/installer#registryaliases) installs another registry with the same file structure, like the same UI built on a different headless library.
+
+## Faster
+
+Measured on a registry of 108 files from Fumadocs UI, on a MacBook (Apple silicon) with Node.js 24:
+
+| Task                                          | v1      | v2     |
+| --------------------------------------------- | ------- | ------ |
+| Compile the registry                          | 35 ms   | 21 ms  |
+| Compile, first run of the process             | 55 ms   | 34 ms  |
+| Load the installer                            | 19 ms   | 4 ms   |
+| Install a layout of 23 files, from local disk | 10.5 ms | 4.5 ms |
+
+Where it comes from:
+
+- **One pass instead of three.** v1 built a file graph, split it into chunks, then transformed each file through an AST. v2 reads the import and export records of each file once, and edits the spans of the original text.
+- **No parser on install.** v1 parsed every installed file to rewrite its imports. v2 fills the positions recorded in the manifest, and only loads the parser for a merge or a route handler.
+- **Less to load.** `zod` alone took about 20 ms to import. It is gone from both the compiler and the installer.
+- **Tree-shaking adds no measurable compile time**: statements are analyzed from the same parse as the scan.
+
+## Lighter
+
+| Runtime dependencies | v1                             | v2                      |
+| -------------------- | ------------------------------ | ----------------------- |
+| Count                | 6                              | 4                       |
+| Parsing              | `oxc-parser`, 3.6 MB installed | `yuku-analyzer`, 1.0 MB |
+| Validation           | `zod`, 4.3 MB installed        | generated at build time |
+
+Sizes are unpacked, on macOS arm64. The manifest validator is generated from TypeScript types by [typia](https://typia.io), and the installer only loads the parser for a merge or a route handler.
+
+## Upgrading
+
+v2 is a breaking release of both `fuma-cli` and `@fuma-cli/interactive`. Follow the [migration guide](/migration).

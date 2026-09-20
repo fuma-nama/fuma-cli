@@ -1,0 +1,16 @@
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+@import "fumadocs-ui/css/preset.css";
+@import "fumapress/css/preset.css";
+@import "@fumari/sponsors/style.css";
+
+@theme {
+  --font-sans: "Geist", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --color-fd-primary: oklch(0.53 0.26 263.51);
+}
+
+.dark {
+  --color-fd-primary: oklch(0.7941 0.0987 266.82);
+}

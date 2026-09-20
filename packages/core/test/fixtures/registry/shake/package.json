@@ -1,0 +1,7 @@
+{
+  "name": "acme-shake",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": { "clsx": "^2.0.0", "tailwind-merge": "^3.0.0" },
+  "devDependencies": { "@types/react": "^19.0.0" }
+}

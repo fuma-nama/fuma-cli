@@ -1,0 +1,12 @@
+{
+  "name": "acme-ui",
+  "version": "1.2.0",
+  "exports": {
+    ".": "./dist/index.js",
+    "./button": "./dist/button.js",
+    "./layout": { "types": "./dist/layout.d.ts", "import": "./dist/layout.js" },
+    "./style.css": "./dist/style.css"
+  },
+  "dependencies": { "clsx": "^2.0.0" },
+  "devDependencies": { "@types/hast": "^3.0.0" }
+}

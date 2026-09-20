@@ -1,12 +1,10 @@
 import type { Framework } from "@/constants";
 import { SUPPORTED_FRAMEWORKS } from "@/constants";
-import { transformRouteHandler } from "@/macros/route-handler.build";
+import { buildRouteHandler } from "@/macros/route-handler.build";
 import { resolveRouteFilePath } from "@/utils/framework";
-import MagicString from "magic-string";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseSync } from "oxc-parser";
 import { expect, test } from "vitest";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -40,18 +38,7 @@ export interface BuildRouteHandlerFileOptions {
 export function buildRouteHandlerFromString(options: BuildRouteHandlerFileOptions): string {
   const { route, routeFilePath, framework, compiledContent } = options;
 
-  const lang = path.extname(routeFilePath) === ".tsx" ? "tsx" : "ts";
-  const result = parseSync(routeFilePath, compiledContent, { lang, astType: "ts" });
-  if (result.errors.length > 0) {
-    throw new Error(
-      `route-handler.build: failed to parse ${routeFilePath}:\n${result.errors.map((e) => e.message).join("\n")}`,
-    );
-  }
-
-  const program = result.program;
-  const s = new MagicString(options.compiledContent);
-  transformRouteHandler(route, routeFilePath, framework, program, s);
-  return s.toString();
+  return buildRouteHandler(compiledContent, route, routeFilePath, framework);
 }
 
 for (const { id, route } of ROUTE_HANDLER_MATRIX_CASES) {

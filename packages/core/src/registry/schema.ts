@@ -1,76 +1,69 @@
-import { z } from "zod";
+import typia from "typia";
 
-export type CompiledFile = z.input<typeof fileSchema>;
-export type CompiledComponent = z.input<typeof componentSchema>;
-export type CompiledRegistryInfo = z.input<typeof registryInfoSchema>;
-export type CompiledIndex = z.input<typeof indexSchema>;
-export type DownloadedRegistryInfo = z.output<typeof registryInfoSchema>;
-export type File = z.output<typeof fileSchema>;
-export type Component = z.output<typeof componentSchema>;
+type Dependencies = Record<string, string | null>;
 
-export const indexSchema = z.object({
-  name: z.string(),
-  title: z.string().optional(),
-  description: z.string().optional(),
-});
+export interface ManifestImport {
+  /** start of the import specifier in file content (quotes excluded), which is `package ?? id` */
+  start: number;
+  /** id of the imported file */
+  id: string;
+  /** names taken from a tree-shaken file, the whole file if omitted */
+  bindings?: string[];
+  /** when defined, the installer keeps this package import unless the imported file is installed */
+  package?: string;
+}
 
-const baseFileSchema = z.object({
-  content: z.string(),
-  /** custom data for file */
-  meta: z.unknown().optional(),
-});
+/** a top-level statement, statements partition the file content */
+export interface StmtInfo {
+  /** it starts from the end of last statement */
+  end: number;
+  /** top-level names, export names included */
+  declares?: string[];
+  /** indices of statements it needs */
+  references?: number[];
+  import?: boolean;
+  dependencies?: Dependencies;
+  devDependencies?: Dependencies;
+}
 
-export const fileSchema = z.union([
-  baseFileSchema.extend({
-    type: z.literal(["components", "lib", "css", "ui", "layout"]),
-    path: z.string(),
-    target: z.string().optional(),
-  }),
-  baseFileSchema.extend({
-    type: z.literal("route-handler"),
-    route: z.string(),
-  }),
-]);
+interface BaseFile {
+  dependencies?: Dependencies;
+  devDependencies?: Dependencies;
+  imports?: ManifestImport[];
+  /** defined for tree-shaken files, which are installed per statement and carry dependencies on statements */
+  stmtInfos?: StmtInfo[];
+}
 
-export const subComponentReference = z.union([
-  // name
-  z.string(),
-  // sub registry + name
-  z.object({
-    type: z.literal("sub-registry"),
-    subRegistry: z.string(),
-    component: z.string(),
-  }),
-  z.object({
-    type: z.literal("http"),
-    registryUrl: z.string(),
-    subRegistry: z.string().optional(),
-    component: z.string(),
-  }),
-]);
+export type ManifestFile =
+  | (BaseFile & {
+      type: "components" | "lib" | "css" | "ui" | "layout";
+      target?: string;
+    })
+  | (BaseFile & {
+      type: "route-handler";
+      route: string;
+    });
 
-export const componentSchema = z.object({
-  name: z.string(),
-  title: z.string().optional(),
-  description: z.string().optional(),
-  files: z.array(fileSchema),
-  dependencies: z.record(z.string(), z.string().or(z.null())),
-  devDependencies: z.record(z.string(), z.string().or(z.null())),
-  /**
-   * list of sub components.
-   */
-  subComponents: z.array(subComponentReference).default([]),
+export interface ManifestComponent {
+  name: string;
+  title?: string;
+  description?: string;
+  /** hidden from component lists, but still installable */
+  unlisted?: boolean;
+  /** paths of files in this registry */
+  files: string[];
+}
 
-  /** custom data for component */
-  meta: z.unknown().optional(),
-});
+export interface Manifest {
+  name: string;
+  components: ManifestComponent[];
+  /** file path (relative to registry dir) -> file */
+  files: Record<string, ManifestFile>;
+  /** names of sub registries */
+  registries?: string[];
+}
 
-export const registryInfoSchema = z.object({
-  indexes: z.array(indexSchema).default([]),
-  unlistedIndexes: z.array(indexSchema).default([]),
+/** @throws when the input is not a manifest */
+export const assertManifest: (input: unknown) => Manifest = typia.createAssert<Manifest>();
 
-  /** names for sub registries */
-  registries: z.array(z.string()).optional(),
-  /** custom data for registry */
-  meta: z.unknown().optional(),
-});
+export { decodeFileId, encodeFileId } from "./id";

@@ -26,7 +26,7 @@ export const handler = $routeHandler(
 );
 ```
 
-The first paremeter must be analyzable as **literals** in the AST.
+The first parameter must be analyzable as **literals** in the AST.
 
 | Option         | Description                                                      |
 | -------------- | ---------------------------------------------------------------- |
@@ -40,24 +40,16 @@ Avoid naming the parameters `args` or `ctx`.
 
 </Callout>
 
-Add the route file to registry definition:
+Describe the route in its sidecar:
 
-```ts
-const registry = {
-  components: [
-    {
-      name: "my-component",
-      files: [
-        // [!code ++:5]
-        {
-          type: "route-handler",
-          route: "api/posts/[id]", // see below for correct format
-          path: "post-route.ts",
-        },
-      ],
-    },
-  ],
-};
+```ts title="src/post-route.install.ts"
+import { defineInstall } from "fuma-cli/compiler";
+
+export default defineInstall({
+  type: "route-handler",
+  route: "api/posts/[id]", // see below for correct format
+  component: "my-component",
+});
 ```
 
 The `route` field defines the actual route to handle requests, its format is same as Next.js App Router (without the extra `route.ts`).

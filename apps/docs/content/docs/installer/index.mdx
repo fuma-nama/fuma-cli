@@ -5,8 +5,23 @@ description: Install compiled registry components into a consumer codebase.
 
 ## Connectors
 
-- **HTTP**: `HttpRegistryConnector(baseUrl)`, fetch resource via HTTP.
-- **File System**: `LocalRegistryConnector(dir)`, reads resource from file system.
+A connector tells the installer where to read the registry from.
+
+```ts tab="HTTP"
+import { HttpRegistryConnector } from "fuma-cli/registry/connector";
+
+// the base URL you serve the registry output at
+const connector = new HttpRegistryConnector("https://acme-ui.com/registry");
+```
+
+```ts tab="File System"
+import { LocalRegistryConnector } from "fuma-cli/registry/connector";
+
+// the `dir` you passed to writeRegistry()
+const connector = new LocalRegistryConnector("./public/registry");
+```
+
+Implement `RegistryConnector` for other sources, it has two methods: `fetchManifest(registry?)` and `fetchFile(file, registry?)`.
 
 ## Installer
 
@@ -23,16 +38,64 @@ const installer = new ComponentInstaller(
   },
 );
 
-const { deps } = await installer.install("button");
+const plan = await installer.install("button");
 
-// or with sub registry:
-const { deps } = await installer.install("button", "my-sub-registry");
+// or from a sub registry:
+await installer.install("chart", "acme/charts");
 
-const dm = await deps();
-if (dm.hasRequired()) await dm.installRequired(); // runs detected package manager
+const deps = await plan.deps();
+if (deps.hasRequired()) await deps.installRequired(); // runs detected package manager
 ```
 
-`install()` returns an object for futher actions, such as install require dependencies.
+### Plan & Apply
+
+`install()` is a shorthand of two steps:
+
+```ts
+const plan = await installer.plan([{ name: "button" }, { name: "chart", registry: "acme/charts" }]);
+
+for (const file of plan.files) {
+  // "create" | "overwrite" | "merge" | "unchanged"
+  console.log(file.status, file.output);
+}
+
+await installer.apply(plan);
+```
+
+- `plan()` links the components against the consumer's codebase, and downloads the files to install. Nothing is written.
+- `apply()` writes the files, asking `io.confirmFileOverride()` for the ones with `overwrite` status.
+
+| Status      | Meaning                                                                                       |
+| ----------- | --------------------------------------------------------------------------------------------- |
+| `create`    | The file doesn't exist.                                                                       |
+| `overwrite` | The file exists with different content.                                                       |
+| `merge`     | A [tree-shaken](/compiler/sidecar#treeshake) file exists, and lacks some declarations in use. |
+| `unchanged` | Nothing to write.                                                                             |
+
+A merge only adds code, so it needs no confirmation:
+
+- Statements are skipped when the file already declares one of their names, along with what only they reference.
+- Imports are inserted after the last import, other statements are appended.
+- Statements that declare nothing, like `"use client"`, are only written when the file is created.
+
+Route handlers are installed by a built-in plugin, using the same hooks available to you.
+
+<Callout title="How preserved imports are linked">
+  An import of a [preserved](/compiler/sidecar#preserve) file points to the local file when it is
+  part of the plan, or already exists in the consumer's codebase. Otherwise, it stays as a package
+  import.
+</Callout>
+
+## Options
+
+| Option            | Description                                                                 |
+| ----------------- | --------------------------------------------------------------------------- |
+| `cwd`             | The consumer's project, defaults to `process.cwd()`.                        |
+| `framework`       | See [below](#framework).                                                    |
+| `outDir`          | Directory of each file type, `base` is prepended to all. `src` is detected. |
+| `io`              | See [below](#io).                                                           |
+| `registryAliases` | See [below](#registryaliases).                                              |
+| `plugins`         | See [Plugins](/installer/plugins).                                          |
 
 ### `framework`
 
@@ -41,8 +104,6 @@ Fuma CLI generates code based on consumer's framework (e.g. `next` or `tanstack-
 Instead of detecting automatically, you can specify it:
 
 ```ts
-import { ComponentInstaller } from "fuma-cli/registry/installer";
-
 const installer = new ComponentInstaller(connector, {
   // 'none' = framework-agnostic
   framework: "none",
@@ -54,17 +115,26 @@ const installer = new ComponentInstaller(connector, {
 Customise the IO interface, useful for integrating with your own TUI.
 
 ```ts
-import { ComponentInstaller } from "fuma-cli/registry/installer";
-
 const installer = new ComponentInstaller(connector, {
   io: {
-    onWarn(message) {
-      console.warn(message);
-    },
-    confirmFileOverride() {
+    confirmFileOverride(file) {
       return true;
     },
-    onFileDownloaded() {},
+    onFileWritten(file) {},
   },
 });
 ```
+
+### `registryAliases`
+
+Install files of another registry with the same file structure, like the same UI built on a different headless library.
+
+```ts
+const installer = new ComponentInstaller(connector, {
+  registryAliases: {
+    "acme/radix-ui": "acme/base-ui",
+  },
+});
+```
+
+Files referencing `acme/radix-ui:button.tsx` now install `acme/base-ui:button.tsx`.

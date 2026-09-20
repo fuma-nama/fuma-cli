@@ -1,4 +1,8 @@
-import { ComponentInstaller, ComponentInstallerOptions } from "fuma-cli/registry/installer";
+import {
+  ComponentInstaller,
+  type ComponentInstallerOptions,
+  type InstallTarget,
+} from "fuma-cli/registry/installer";
 import { RegistryConnector } from "fuma-cli/registry/connector";
 import {
   autocompleteMultiselect,
@@ -8,7 +12,8 @@ import {
   log,
   outro,
   spinner,
-  SpinnerResult,
+  type Option,
+  type SpinnerResult,
 } from "@clack/prompts";
 import picocolors from "picocolors";
 import { detect } from "package-manager-detector";
@@ -23,15 +28,12 @@ export class FumadocsComponentInstaller extends ComponentInstaller {
     super(connector, {
       ...config,
       io: {
-        onWarn: (message) => {
-          this.interactive?.spin.message(message);
-        },
         confirmFileOverride: async (options) => {
           if (!this.interactive) return true;
           const { name, spin } = this.interactive;
           spin.clear();
           const value = await confirm({
-            message: `Do you want to override ${options.path}?`,
+            message: `Do you want to override ${options.output}?`,
             initialValue: false,
           });
           if (isCancel(value)) {
@@ -41,8 +43,8 @@ export class FumadocsComponentInstaller extends ComponentInstaller {
           spin.start(picocolors.bold(picocolors.cyanBright(`Installing ${name}`)));
           return value;
         },
-        onFileDownloaded: (options) => {
-          this.interactive?.spin.message(options.path);
+        onFileWritten: (file) => {
+          this.interactive?.spin.message(file.output);
         },
       },
     });
@@ -50,20 +52,21 @@ export class FumadocsComponentInstaller extends ComponentInstaller {
 
   async add(config: { subRegistries?: string[] } = {}) {
     const { subRegistries = [] } = config;
-    const connector = this.connector;
-
     const spin = spinner();
     spin.start("fetching registry");
 
-    async function scan(subRegistry?: string) {
-      const info = await connector.fetchRegistryInfo(subRegistry);
-
-      return info.indexes.map((item) => ({
-        label: item.title ?? item.name,
-        value: { name: item.name, subRegistry },
-        hint: item.description,
-      }));
-    }
+    const scan = async (registry?: string) => {
+      const options: Option<InstallTarget>[] = [];
+      for (const item of (await this.fetchManifest(registry)).components) {
+        if (item.unlisted) continue;
+        options.push({
+          label: item.title ?? item.name,
+          value: { name: item.name, registry },
+          hint: item.description,
+        });
+      }
+      return options;
+    };
 
     spin.stop(picocolors.bold(picocolors.greenBright("registry fetched")));
     const value = await autocompleteMultiselect({
@@ -77,13 +80,13 @@ export class FumadocsComponentInstaller extends ComponentInstaller {
     }
 
     for (const target of value) {
-      await this.installInteractive(target.name, target.subRegistry);
+      await this.installInteractive(target.name, target.registry);
     }
 
     outro(picocolors.bold(picocolors.greenBright("Successful")));
   }
 
-  async installInteractive(name: string, subRegistry?: string): Promise<void> {
+  async installInteractive(name: string, registry?: string): Promise<void> {
     if (this.interactive) {
       throw new Error(`cannot install while installing another component`);
     }
@@ -93,7 +96,7 @@ export class FumadocsComponentInstaller extends ComponentInstaller {
 
     try {
       this.interactive = { name, spin };
-      const deps = await super.install(name, subRegistry).then((res) => res.deps());
+      const deps = await super.install(name, registry).then((res) => res.deps());
       spin.stop(picocolors.bold(picocolors.greenBright(`${name} installed`)));
 
       if (deps.hasRequired()) {

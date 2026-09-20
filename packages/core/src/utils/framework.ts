@@ -1,13 +1,12 @@
 import fs from "node:fs/promises";
 import MagicString from "magic-string";
-import { parse } from "oxc-parser";
 import type {
   Argument,
   ArrayExpression,
   ExportDefaultDeclarationKind,
   Expression,
   Program,
-} from "@oxc-project/types";
+} from "@yuku-toolchain/types";
 import type { Framework } from "@/constants";
 
 /**
@@ -167,17 +166,8 @@ export async function addReactRouterRouteToFile(
   spec: AddReactRouterRouteToFileInput,
   write = true,
 ): Promise<AddReactRouterRouteToFileResult> {
-  const parsed = await parse(routesFilePath, content, {
-    lang: routesFilePath.endsWith(".tsx") ? "tsx" : "ts",
-    astType: "ts",
-  });
-  if (parsed.errors.length > 0) {
-    throw new Error(
-      `addReactRouterRouteToFile: failed to parse ${routesFilePath}:\n${parsed.errors.map((e) => e.message).join("\n")}`,
-    );
-  }
-
-  const array = findReactRouterRoutesArray(parsed.program);
+  const { analyzeFile } = await import("@/utils/analyze");
+  const array = findReactRouterRoutesArray(analyzeFile(routesFilePath, content).ast);
   if (!array) {
     throw new Error(
       `addReactRouterRouteToFile: no export default array found in ${routesFilePath}`,

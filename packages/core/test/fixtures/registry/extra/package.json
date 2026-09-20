@@ -1,0 +1,5 @@
+{
+  "name": "acme-extra",
+  "version": "0.3.0",
+  "dependencies": { "acme-ui": "workspace:*", "clsx": "^2.0.0" }
+}
