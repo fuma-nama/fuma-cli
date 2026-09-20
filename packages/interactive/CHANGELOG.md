@@ -1,5 +1,3 @@
-# @fuma-cli/interactive
-
 ## 0.1.1
 
 ### Patch Changes
