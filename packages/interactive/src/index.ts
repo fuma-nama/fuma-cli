@@ -18,13 +18,13 @@ import {
 import picocolors from "picocolors";
 import { detect } from "package-manager-detector";
 
-export class FumadocsComponentInstaller extends ComponentInstaller {
+export class InteractiveInstaller extends ComponentInstaller {
   private interactive: {
     name: string;
     spin: SpinnerResult;
   } | null = null;
 
-  constructor(connector: RegistryConnector, config: Omit<ComponentInstallerOptions, "io">) {
+  constructor(connector: RegistryConnector, config: ComponentInstallerOptions = {}) {
     super(connector, {
       ...config,
       io: {
@@ -46,6 +46,7 @@ export class FumadocsComponentInstaller extends ComponentInstaller {
         onFileWritten: (file) => {
           this.interactive?.spin.message(file.output);
         },
+        ...config.io,
       },
     });
   }
@@ -131,3 +132,6 @@ export class FumadocsComponentInstaller extends ComponentInstaller {
     }
   }
 }
+
+/** @deprecated use `InteractiveInstaller` */
+export { InteractiveInstaller as FumadocsComponentInstaller };

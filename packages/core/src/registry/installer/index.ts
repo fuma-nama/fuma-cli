@@ -43,6 +43,8 @@ export interface PluginContext {
   cwd: string;
   /** absolute path of `outDir.base` */
   baseDir: string;
+  /** directory of each file type, relative to `baseDir` */
+  outDir: OutputDestinations;
   getFramework: () => Promise<Framework>;
 }
 
@@ -123,6 +125,7 @@ export class ComponentInstaller {
     this.context = {
       cwd,
       baseDir: path.resolve(cwd, this.destinations.base),
+      outDir: this.destinations,
       getFramework: () => (framework ??= Promise.resolve(config.framework ?? detectFramework(cwd))),
     };
   }
@@ -427,3 +430,4 @@ function toImportSpecifier(sourceFile: string, referenceFile: string): string {
 }
 
 export type { DependencyManager };
+export { reuseUI, type ReuseUIOptions } from "./reuse-ui";

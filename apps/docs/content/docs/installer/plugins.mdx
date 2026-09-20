@@ -32,6 +32,7 @@ Hooks are called with a context as `this`:
 | ---------------- | ---------------------------------- |
 | `cwd`            | The consumer's project.            |
 | `baseDir`        | Absolute path of `outDir.base`.    |
+| `outDir`         | Directory of each file type.       |
 | `getFramework()` | The configured/detected framework. |
 
 ### `resolveId`
@@ -87,4 +88,23 @@ const log: InstallerPlugin = {
     for (const file of files) console.log(file.output);
   },
 };
+```
+
+## Built-in
+
+### `reuseUI`
+
+Files of `ui` type follow the API of Shadcn UI. Use the ones that consumer already has, instead of installing another copy:
+
+```ts
+import { ComponentInstaller, reuseUI } from "fuma-cli/registry/installer";
+
+new ComponentInstaller(connector, {
+  plugins: [
+    reuseUI({
+      // file in registry -> the consumer's file, relative to `outDir.base`
+      files: { "utils/cn.ts": "lib/utils" },
+    }),
+  ],
+});
 ```

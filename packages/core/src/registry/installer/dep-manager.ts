@@ -19,8 +19,12 @@ export async function createDeps(
 }
 
 export class DependencyManager {
-  readonly dependencies: string[];
-  readonly devDependencies: string[];
+  /** missing packages as `name@version`, to pass to a package manager */
+  readonly dependencies: string[] = [];
+  readonly devDependencies: string[] = [];
+  /** missing packages and their version, `null` for the latest */
+  readonly required: Record<string, string | null> = {};
+  readonly requiredDev: Record<string, string | null> = {};
 
   constructor(
     private readonly cwd: string,
@@ -28,18 +32,21 @@ export class DependencyManager {
     dependencies: Record<string, string | null>,
     devDependencies: Record<string, string | null>,
   ) {
-    const installedDeps = {
-      ...packageJson?.dependencies,
-      ...packageJson?.devDependencies,
-    };
+    const isInstalled = (name: string) =>
+      packageJson?.dependencies?.[name] !== undefined ||
+      packageJson?.devDependencies?.[name] !== undefined;
 
-    this.dependencies = Object.entries(dependencies)
-      .filter(([k]) => !(k in installedDeps))
-      .map(([k, v]) => encodeDep(k, v));
+    for (const name in dependencies) {
+      if (isInstalled(name)) continue;
+      this.required[name] = dependencies[name];
+      this.dependencies.push(encodeDep(name, dependencies[name]));
+    }
 
-    this.devDependencies = Object.entries(devDependencies)
-      .filter(([k]) => !(k in installedDeps))
-      .map(([k, v]) => encodeDep(k, v));
+    for (const name in devDependencies) {
+      if (isInstalled(name)) continue;
+      this.requiredDev[name] = devDependencies[name];
+      this.devDependencies.push(encodeDep(name, devDependencies[name]));
+    }
   }
 
   hasRequired() {
@@ -49,16 +56,14 @@ export class DependencyManager {
   async writeRequired(packageJsonPath = path.resolve(this.cwd, "package.json")) {
     if (this.packageJson === null) return false;
 
-    for (const dep of this.dependencies) {
-      const { name, version } = decodeDep(dep);
+    for (const name in this.required) {
       this.packageJson.dependencies ??= {};
-      this.packageJson.dependencies[name] ??= version;
+      this.packageJson.dependencies[name] ??= this.required[name] || "latest";
     }
 
-    for (const dep of this.devDependencies) {
-      const { name, version } = decodeDep(dep);
+    for (const name in this.requiredDev) {
       this.packageJson.devDependencies ??= {};
-      this.packageJson.devDependencies[name] ??= version;
+      this.packageJson.devDependencies[name] ??= this.requiredDev[name] || "latest";
     }
 
     await fs.writeFile(packageJsonPath, JSON.stringify(this.packageJson, null, 2));
@@ -74,14 +79,5 @@ export class DependencyManager {
 }
 
 function encodeDep(name: string, version: string | null): string {
-  return version === null || version.length === 0 ? name : `${name}@${version}`;
-}
-
-function decodeDep(dep: string) {
-  const idx = dep.indexOf("@", 1);
-  if (idx === -1) {
-    return { name: dep, version: "latest" };
-  } else {
-    return { name: dep.slice(0, idx), version: dep.slice(idx + 1) };
-  }
+  return version ? `${name}@${version}` : name;
 }

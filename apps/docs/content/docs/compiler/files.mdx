@@ -27,8 +27,9 @@ A file is installed when it is an entry of a [component](/compiler#components), 
 
 ### Patterns
 
-- Patterns are matched against the path relative to `dir`, using [`path.matchesGlob()`](https://nodejs.org/api/path.html#pathmatchesglobpath-pattern) of Node.js.
+- Patterns are matched against the path relative to `dir`, using [picomatch](https://github.com/micromatch/picomatch).
 - **The first match wins**, put specific patterns before general ones.
+- A pattern without globs is a path, the compilation fails when the file doesn't exist.
 - A rule also applies when the file is imported from [another registry](/compiler/imports#cross-registry-imports).
 
 ```ts
@@ -63,6 +64,8 @@ Assets referenced as `new URL("./font.ttf", import.meta.url)` need a matching ru
 | `ui/**`       | `<dir>/*`         | `ui/form/input.tsx` | `<dir>/form/input.tsx`         |
 | `ui/**`       | `<dir>/openapi/*` | `ui/form/input.tsx` | `<dir>/openapi/form/input.tsx` |
 | `icons/*.tsx` | `<dir>/icons/*`   | `icons/close.tsx`   | `<dir>/icons/close.tsx`        |
+
+Without `target`, two matched files of the same name and `type` fail the compilation, as they would be installed to the same location.
 
 The location of a file only depends on its own path, never on the file importing it.
 

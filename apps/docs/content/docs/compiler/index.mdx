@@ -64,27 +64,30 @@ const registry: Registry = {
 };
 ```
 
-| Field         | Description                                   |
-| ------------- | --------------------------------------------- |
-| `entry`       | Entry files, relative to `dir`.               |
-| `title`       | Display name.                                 |
-| `description` | Short description.                            |
-| `unlisted`    | Hide from component lists, still installable. |
+| Field         | Description                                      |
+| ------------- | ------------------------------------------------ |
+| `entry`       | Entry files or glob patterns, relative to `dir`. |
+| `title`       | Display name.                                    |
+| `description` | Short description.                               |
+| `unlisted`    | Hide from component lists, still installable.    |
 
 - Every entry must match a rule in [`files`](/compiler/files), otherwise the compilation fails.
 - A file can be an entry of multiple components. To offer several components as one, like `all`, list all their entries.
 
-Entries can be generated, a single rule covers all of them:
+#### Glob Entries
+
+An entry can be a glob pattern. With `*` in the name, each matched file becomes its own component:
 
 ```ts
-import path from "node:path";
-import { glob } from "tinyglobby";
-
-const components: Registry["components"] = {};
-for (const file of await glob("icons/*.tsx", { cwd: "src" })) {
-  components[path.basename(file, ".tsx")] = file;
-}
+const components: Registry["components"] = {
+  // one component with every icon
+  icons: "icons/*.tsx",
+  // `icons/close`, `icons/menu`, etc.
+  "icons/*": { unlisted: true, entry: "icons/*.tsx" },
+};
 ```
+
+Like [`target`](/compiler/files#target), `*` in the name is the path after the fixed part of pattern, without the extension.
 
 ### `entries`
 

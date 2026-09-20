@@ -3,9 +3,10 @@ import fs from "node:fs";
 import { findPackageJSON, isBuiltin } from "node:module";
 import { pathToFileURL } from "node:url";
 import { ResolverFactory } from "oxc-resolver";
+import picomatch from "picomatch";
 import { MACRO_PATH } from "@/constants";
 import { encodeFileId } from "@/registry/id";
-import type { Manifest, ManifestFile } from "@/registry/schema";
+import type { Manifest, ManifestComponent, ManifestFile } from "@/registry/schema";
 import type { PackageJson } from "@/types";
 import { findNearestPackageJson } from "@/utils/fs";
 import { buildExportIndex, type ExportIndex, nameKey } from "./exports";
@@ -30,8 +31,10 @@ interface RegistryState {
   packageJson: PackageJson;
   /** specifier -> source file */
   entries: Map<string, string>;
-  /** `fixed` is the part before globs, `undefined` for a path */
-  rules: { pattern: string; fixed?: string; rule: FileRule }[];
+  /** `rest` is where the path after the fixed part of pattern starts, `undefined` for a path */
+  rules: { isMatch: picomatch.Matcher; rest?: number; rule: FileRule }[];
+  /** `<type>:<file name>` of files without `target` -> file */
+  flattened: Map<string, string>;
   exportIndex?: ExportIndex;
   output: CompiledRegistry;
 }
@@ -123,21 +126,15 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
     const relative = registry && toPosix(path.relative(registry.dir, file));
     // files outside of `dir` cannot be served
     if (relative && !relative.startsWith("../")) {
-      for (const { pattern, fixed, rule } of registry!.rules) {
-        if (fixed === undefined) {
-          if (relative !== pattern) continue;
-          // compiling a glob is slow, skip when the fixed part already differs
-        } else if (!relative.startsWith(fixed) || !path.posix.matchesGlob(relative, pattern)) {
-          continue;
-        }
-
+      for (const { isMatch, rest, rule } of registry!.rules) {
+        if (!isMatch(relative)) continue;
         out = rule;
-        if (fixed === undefined) break;
-        // `*` refers to the path after the fixed part of pattern
-        const rest = relative.slice(fixed.length);
-        if ("alias" in rule) out = { alias: rule.alias.replace(/\*+/, rest) };
+        if (rest === undefined) break;
+
+        const value = relative.slice(rest);
+        if ("alias" in rule) out = { alias: rule.alias.replace(/\*+/, value) };
         else if ("target" in rule && rule.target) {
-          out = { ...rule, target: rule.target.replace(/\*+/, rest) };
+          out = { ...rule, target: rule.target.replace(/\*+/, value) };
         }
         break;
       }
@@ -172,6 +169,16 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
     };
     modules.set(file, module);
     registry.output.manifest.files[relative] = output;
+
+    if (output.type !== "route-handler" && !output.target) {
+      const key = `${output.type}:${path.basename(file)}`;
+      const other = registry.flattened.get(key);
+      if (other)
+        errors.push(
+          `${file}: installed to the same location as ${other}, set \`target\` in its rule`,
+        );
+      else registry.flattened.set(key, file);
+    }
     return module;
   }
 
@@ -186,6 +193,7 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
       packageJson: JSON.parse(fs.readFileSync(pkg, "utf-8")),
       entries: new Map(),
       rules: [],
+      flattened: new Map(),
       output: {
         manifest: { name: registry.name, components: [], files: {} },
         files: new Map(),
@@ -195,34 +203,53 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
     registries.push(state);
     resolveEntries(state);
     for (const pattern in registry.files) {
-      const glob = pattern.search(/[^/]*[*?[{]/);
-      state.rules.push({
-        pattern,
-        fixed: glob === -1 ? undefined : pattern.slice(0, glob),
-        rule: registry.files[pattern],
-      });
+      const rest = getRestStart(pattern);
+      if (rest === undefined && !fs.existsSync(path.join(dir, pattern))) {
+        errors.push(`registry "${registry.name}": cannot find "${pattern}" of \`files\``);
+      }
+      state.rules.push({ isMatch: picomatch(pattern), rest, rule: registry.files[pattern] });
     }
 
     const { name } = state.packageJson;
     if (name && !packages.has(name)) packages.set(name, state);
 
-    for (const name in registry.components) {
-      const value = registry.components[name];
+    for (const key in registry.components) {
+      const value = registry.components[key];
       const { entry, ...info } =
         typeof value === "object" && !Array.isArray(value) ? value : { entry: value };
-      const component: Manifest["components"][number] = { name, ...info, files: [] };
+      // `*` in name: a component per entry
+      const shared: ManifestComponent | false = !key.includes("*") && {
+        name: key,
+        ...info,
+        files: [],
+      };
+      if (shared) state.output.manifest.components.push(shared);
 
       for (const item of typeof entry === "string" ? [entry] : entry) {
-        const file = path.join(dir, item);
-        if (!fs.existsSync(file))
-          errors.push(`registry "${registry.name}": cannot find "${item}" of component "${name}"`);
-        else if (getModule(file, state)) component.files.push(toPosix(path.normalize(item)));
-        else
-          errors.push(
-            `registry "${registry.name}": "${item}" of component "${name}" matches no rule in \`files\``,
-          );
+        const start = getRestStart(item);
+        const matched = start === undefined ? [item] : fs.globSync(item, { cwd: dir }).sort();
+        if (matched.length === 0 || !fs.existsSync(path.join(dir, matched[0]))) {
+          errors.push(`registry "${registry.name}": cannot find "${item}" of component "${key}"`);
+          continue;
+        }
+
+        for (const match of matched) {
+          const file = toPosix(path.normalize(match));
+          if (!getModule(path.join(dir, file), state)) {
+            errors.push(
+              `registry "${registry.name}": "${file}" of component "${key}" matches no rule in \`files\``,
+            );
+          } else if (shared) {
+            shared.files.push(file);
+          } else {
+            state.output.manifest.components.push({
+              name: key.replace("*", file.slice(start, -path.extname(file).length)),
+              ...info,
+              files: [file],
+            });
+          }
+        }
       }
-      state.output.manifest.components.push(component);
     }
 
     if (registry.subRegistries) {
@@ -526,6 +553,12 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
 
   for (const module of modules.values()) render(module);
   return output;
+}
+
+/** @returns where the path after the fixed part of pattern starts, `undefined` for a path */
+function getRestStart(pattern: string) {
+  const { base, isGlob } = picomatch.scan(pattern);
+  if (isGlob) return base ? base.length + 1 : 0;
 }
 
 function findSource(base: string) {
