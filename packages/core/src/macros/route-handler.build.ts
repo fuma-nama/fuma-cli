@@ -1,17 +1,17 @@
 import path from "node:path";
 import MagicString from "magic-string";
-import { parseSync } from "oxc-parser";
 import type {
   Argument,
   CallExpression,
   ImportDeclaration,
   ObjectExpression,
-  ParamPattern,
+  FunctionParameter,
   Program,
-  Statement,
-} from "@oxc-project/types";
+  ProgramStatement,
+} from "@yuku-toolchain/types";
 import type { Framework } from "@/constants";
 import type { RouteHandlerHttpMethod, StaticInfo } from "./route-handler";
+import { analyzeFile } from "@/utils/analyze";
 import { dedent, indent } from "@/utils/format";
 
 const reactRouterLoaderMethods = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -22,7 +22,7 @@ export type ParsedRouteInfo = StaticInfo<string, string | undefined>;
 /** find `const x = $routeHandler(...)` at top level, optionally exported */
 function findMacroCall(
   program: Program,
-): { statement: Statement; call: CallExpression; imports: ImportDeclaration[] } | undefined {
+): { statement: ProgramStatement; call: CallExpression; imports: ImportDeclaration[] } | undefined {
   const locals = new Set<string>();
   const imports: ImportDeclaration[] = [];
 
@@ -143,7 +143,7 @@ function encodeKey(key: string): string {
   return key;
 }
 
-function bindingNameFromParam(p: ParamPattern): string | null {
+function bindingNameFromParam(p: FunctionParameter): string | null {
   if (p.type === "Identifier") return p.name;
   return null;
 }
@@ -417,19 +417,18 @@ export function buildRouteHandler(
   routeFilePath: string,
   framework: Framework,
 ): string {
-  const result = parseSync(routeFilePath, content);
-  if (result.errors.length > 0) {
-    throw new Error(
-      `failed to parse ${routeFilePath}:\n${result.errors.map((e) => e.message).join("\n")}`,
-    );
-  }
-
   const s = new MagicString(content);
-  transformRouteHandler(route, routeFilePath, framework, result.program, s);
+  transformRouteHandler(
+    route,
+    routeFilePath,
+    framework,
+    analyzeFile(routeFilePath, content).ast,
+    s,
+  );
   return s.toString();
 }
 
-export function transformRouteHandler(
+function transformRouteHandler(
   route: string,
   routeFilePath: string,
   framework: Framework,

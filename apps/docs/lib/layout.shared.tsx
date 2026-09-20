@@ -12,6 +12,13 @@ export function baseOptions(): BaseLayoutProps {
         </>
       ),
     },
+    links: [
+      {
+        text: "Sponsors",
+        url: "https://fuma-nama.dev/sponsors",
+        external: true,
+      },
+    ],
     githubUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
   };
 }

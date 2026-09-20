@@ -3,26 +3,41 @@ import { z } from "zod";
 export type Manifest = z.output<typeof manifestSchema>;
 export type ManifestFile = z.output<typeof fileSchema>;
 export type ManifestImport = z.output<typeof importSchema>;
+export type StmtInfo = z.output<typeof stmtInfoSchema>;
 export type ManifestComponent = z.output<typeof componentSchema>;
 
 const dependencies = z.record(z.string(), z.string().or(z.null()));
 
 export const importSchema = z.object({
-  /** span of the import specifier in file content (quotes excluded) */
+  /** start of the import specifier in file content (quotes excluded), which is `package ?? id` */
   start: z.number(),
-  end: z.number(),
   /** id of the imported file */
   id: z.string(),
-  /** names taken from the file, the whole file if omitted */
+  /** names taken from a tree-shaken file, the whole file if omitted */
   bindings: z.array(z.string()).optional(),
   /** when defined, the installer keeps this package import unless the imported file is installed */
   package: z.string().optional(),
+});
+
+/** a top-level statement, statements partition the file content */
+export const stmtInfoSchema = z.object({
+  /** it starts from the end of last statement */
+  end: z.number(),
+  /** top-level names, export names included */
+  declares: z.array(z.string()).optional(),
+  /** indices of statements it needs */
+  references: z.array(z.number()).optional(),
+  import: z.boolean().optional(),
+  dependencies: dependencies.optional(),
+  devDependencies: dependencies.optional(),
 });
 
 const baseFileSchema = z.object({
   dependencies: dependencies.optional(),
   devDependencies: dependencies.optional(),
   imports: z.array(importSchema).optional(),
+  /** defined for tree-shaken files, which are installed per statement and carry dependencies on statements */
+  stmtInfos: z.array(stmtInfoSchema).optional(),
 });
 
 export const fileSchema = z.union([
@@ -55,12 +70,4 @@ export const manifestSchema = z.object({
   registries: z.array(z.string()).optional(),
 });
 
-/** `<registry>:<path>` */
-export function encodeFileId(registry: string, path: string): string {
-  return `${registry}:${path}`;
-}
-
-export function decodeFileId(id: string): { registry: string; path: string } {
-  const idx = id.indexOf(":");
-  return { registry: id.slice(0, idx), path: id.slice(idx + 1) };
-}
+export { decodeFileId, encodeFileId } from "./id";

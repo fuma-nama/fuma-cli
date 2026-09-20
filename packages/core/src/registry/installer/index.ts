@@ -2,7 +2,8 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { type Framework, JS_LANGS } from "@/constants";
-import { decodeFileId, encodeFileId, type Manifest, type ManifestFile } from "@/registry/schema";
+import { decodeFileId, encodeFileId } from "@/registry/id";
+import type { Manifest, ManifestFile, ManifestImport, StmtInfo } from "@/registry/schema";
 import type { RegistryConnector } from "@/registry/connector";
 import { createDeps, type DependencyManager } from "@/registry/installer/dep-manager";
 import type { Awaitable } from "@/types";
@@ -23,7 +24,8 @@ export interface LinkedFile {
 
 export interface PlannedFile extends LinkedFile {
   content: string | Uint8Array;
-  status: "create" | "overwrite" | "unchanged";
+  /** `merge` adds missing declarations to an existing file without touching the rest */
+  status: "create" | "overwrite" | "merge" | "unchanged";
 }
 
 export interface InstallPlan {
@@ -142,37 +144,78 @@ export class ComponentInstaller {
    * Link the components against consumer's codebase, nothing is written until `apply()`.
    */
   async plan(targets: InstallTarget[]): Promise<InstallPlan> {
-    const stack: string[] = [];
+    const stack: Pick<ManifestImport, "id" | "bindings">[] = [];
 
     for (const target of targets) {
       const manifest = await this.fetchManifest(target.registry);
       const component = manifest.components.find((item) => item.name === target.name);
       if (!component) throw new Error(`component "${target.name}" not found`);
-      for (const file of component.files) stack.push(encodeFileId(manifest.name, file));
+      for (const file of component.files) stack.push({ id: encodeFileId(manifest.name, file) });
     }
 
     // files reachable without going through a package import
-    const closure = new Map<string, LinkedFile>();
-    let id: string | undefined;
-    while ((id = stack.pop())) {
-      const file = await this.link(id);
-      if (closure.has(file.id)) continue;
-      closure.set(file.id, file);
-      if (file.external || !file.info.imports) continue;
+    const closure = new Map<string, ClosureFile>();
+    let request: Pick<ManifestImport, "id" | "bindings"> | undefined;
+    while ((request = stack.pop())) {
+      const file = await this.link(request.id);
+      const { stmtInfos, imports = [] } = file.info;
+      let entry = closure.get(file.id);
+      if (!entry) {
+        entry = { file, bindings: new Set(), imports };
+        closure.set(file.id, entry);
 
-      for (const item of file.info.imports) {
-        if (!item.package) stack.push(item.id);
+        const code =
+          stmtInfos && !file.external
+            ? await fs.readFile(file.output, "utf-8").catch(() => undefined)
+            : undefined;
+        if (code !== undefined) {
+          const { scanDeclared } = await import("@/compiler/stmt");
+          entry.merge = { code, ...scanDeclared(file.output, code) };
+        }
+      }
+
+      const { bindings } = entry;
+      if (bindings === "*") continue;
+      if (request.bindings && stmtInfos) {
+        const size = bindings.size;
+        for (const name of request.bindings) bindings.add(name);
+        if (bindings.size === size) continue;
+      } else entry.bindings = "*";
+
+      if (file.external) continue;
+      if (stmtInfos) {
+        // selecting more statements can request more files and bindings
+        entry.stmts = selectStmts(stmtInfos, entry.bindings, entry.merge?.names);
+        entry.imports = [];
+        let i = 0;
+        for (const stmt of entry.stmts) {
+          while (i < imports.length && imports[i].start < stmt.start) i++;
+          for (; i < imports.length && imports[i].start < stmt.end; i++) {
+            entry.imports.push(imports[i]);
+          }
+        }
+      }
+
+      for (const item of entry.imports) {
+        if (item.package) {
+          // a tree-shaken file of the consumer may lack the bindings
+          const target = await this.link(item.id);
+          if (!target.info.stmtInfos || !existsSync(target.output)) continue;
+        }
+        stack.push(item);
       }
     }
 
     const dependencies: Record<string, string | null> = {};
     const devDependencies: Record<string, string | null> = {};
     const pending: Promise<PlannedFile>[] = [];
-    for (const file of closure.values()) {
-      if (file.external) continue;
-      Object.assign(dependencies, file.info.dependencies);
-      Object.assign(devDependencies, file.info.devDependencies);
-      pending.push(this.render(file, closure));
+    for (const entry of closure.values()) {
+      if (entry.file.external) continue;
+      for (const item of entry.stmts ?? [entry.file.info]) {
+        Object.assign(dependencies, item.dependencies);
+        Object.assign(devDependencies, item.devDependencies);
+      }
+      pending.push(this.render(entry, closure));
     }
 
     return {
@@ -244,31 +287,58 @@ export class ComponentInstaller {
     };
   }
 
-  private async render(file: LinkedFile, closure: Map<string, LinkedFile>): Promise<PlannedFile> {
-    const { info, output } = file;
+  private async render(
+    entry: ClosureFile,
+    closure: Map<string, ClosureFile>,
+  ): Promise<PlannedFile> {
+    const { file, imports, merge } = entry;
+    const { output } = file;
+    if (merge && entry.stmts!.length === 0) {
+      return { ...file, content: merge.code, status: "unchanged" };
+    }
+
     const root = await this.fetchManifest();
     const bytes = await this.connector.fetchFile(
       file.path,
       file.registry === root.name ? undefined : file.registry,
     );
-    const existing = await fs.readFile(output).catch(() => undefined);
+    const existing = merge ? undefined : await fs.readFile(output).catch(() => undefined);
 
     if (!JS_LANGS.some((lang) => output.endsWith(`.${lang}`))) {
       return { ...file, content: bytes, status: getStatus(existing?.equals(bytes)) };
     }
 
     const source = new TextDecoder().decode(bytes);
+    let head = "";
     let code = "";
-    let last = 0;
-    for (const item of info.imports ?? []) {
-      const target = await this.link(item.id);
-      const usePackage = item.package && !closure.has(target.id) && !existsSync(target.output);
+    let i = 0;
+    const stmts: SelectedStmt[] = entry.stmts ?? [{ start: 0, end: source.length }];
+    for (const stmt of stmts) {
+      let text = "";
+      let last = stmt.start;
+      for (; i < imports.length && imports[i].start < stmt.end; i++) {
+        const item = imports[i];
+        const target = await this.link(item.id);
+        const usePackage = item.package && !closure.has(target.id) && !existsSync(target.output);
 
-      code += source.slice(last, item.start);
-      code += usePackage ? item.package : toImportSpecifier(output, target.output);
-      last = item.end;
+        text += source.slice(last, item.start);
+        text += usePackage ? item.package : toImportSpecifier(output, target.output);
+        last = item.start + (item.package ?? item.id).length;
+      }
+      text += source.slice(last, stmt.end);
+
+      if (merge && stmt.import) head += text;
+      else code += text;
     }
-    code += source.slice(last);
+
+    if (merge) {
+      const { importEnd } = merge;
+      if (head) head = importEnd > 0 ? `\n${head.trim()}` : `${head.trim()}\n\n`;
+      head = merge.code.slice(0, importEnd) + head + merge.code.slice(importEnd);
+      code = code ? `${head.trimEnd()}\n\n${code.trim()}\n` : head;
+    } else if (entry.stmts) {
+      code = `${code.trim()}\n`;
+    }
 
     for (const plugin of this.plugins) {
       code = (await plugin.transform?.call(this.context, code, file)) ?? code;
@@ -277,9 +347,56 @@ export class ComponentInstaller {
     return {
       ...file,
       content: code,
-      status: getStatus(existing && existing.toString().trim() === code.trim()),
+      status: merge ? "merge" : getStatus(existing && existing.toString().trim() === code.trim()),
     };
   }
+}
+
+type SelectedStmt = StmtInfo & { start: number };
+
+interface ClosureFile {
+  file: LinkedFile;
+  /** names requested from the file, `*` for the whole file */
+  bindings: Set<string> | "*";
+  /** statements to install, `undefined` for the whole file */
+  stmts?: SelectedStmt[];
+  /** imports inside `stmts` */
+  imports: ManifestImport[];
+  /** the file of consumer to add `stmts` to */
+  merge?: { code: string; names: Set<string>; importEnd: number };
+}
+
+/**
+ * @param declared - names the consumer's file already has, given when merging
+ * @returns statements needed for `bindings` in source order, the ones `declared` are left out.
+ */
+function selectStmts(
+  stmts: StmtInfo[],
+  bindings: Set<string> | "*",
+  declared?: Set<string>,
+): SelectedStmt[] {
+  const selected: boolean[] = [];
+  const stack: number[] = [];
+  for (let i = 0; i < stmts.length; i++) {
+    const { declares } = stmts[i];
+    // statements without names are part of every new file
+    if (declares ? bindings === "*" || declares.some((v) => bindings.has(v)) : !declared)
+      stack.push(i);
+  }
+
+  let i: number | undefined;
+  while ((i = stack.pop()) !== undefined) {
+    const { declares, references = [] } = stmts[i];
+    if (selected[i] || (declared && declares?.some((v) => declared.has(v)))) continue;
+    selected[i] = true;
+    for (const ref of references) stack.push(ref);
+  }
+
+  const out: SelectedStmt[] = [];
+  for (let i = 0; i < stmts.length; i++) {
+    if (selected[i]) out.push({ ...stmts[i], start: i === 0 ? 0 : stmts[i - 1].end });
+  }
+  return out;
 }
 
 /** `undefined` when the file doesn't exist */
