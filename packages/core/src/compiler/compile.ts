@@ -2,15 +2,16 @@ import path from "node:path";
 import fs from "node:fs";
 import { findPackageJSON, isBuiltin } from "node:module";
 import { pathToFileURL } from "node:url";
+import MagicString from "magic-string";
 import { ResolverFactory } from "oxc-resolver";
-import picomatch from "picomatch";
-import { MACRO_PATH } from "@/constants";
+import { MACRO_PATH, SCRIPT_EXTS } from "@/constants";
 import { encodeFileId } from "@/registry/id";
 import type { Manifest, ManifestComponent, ManifestFile } from "@/registry/schema";
 import type { PackageJson } from "@/types";
-import { findNearestPackageJson } from "@/utils/fs";
-import { buildExportIndex, type ExportIndex, nameKey } from "./exports";
+import { findNearestPackageJson, toPosix } from "@/utils/fs";
+import { buildExportIndex, type ExportIndex, type PackageImport, toPackageImport } from "./exports";
 import type { FileRule, Registry } from "./registry";
+import { type CompiledRule, compileRule, getRestStart, glob, matchRule } from "./rules";
 import { type ImportRecord, isScannable, scan, type ScanResult } from "./scan";
 import { stmtAt } from "./stmt";
 
@@ -31,22 +32,30 @@ interface RegistryState {
   packageJson: PackageJson;
   /** specifier -> source file */
   entries: Map<string, string>;
-  /** `rest` is where the path after the fixed part of pattern starts, `undefined` for a path */
-  rules: { isMatch: picomatch.Matcher; rest?: number; rule: FileRule }[];
+  rules: CompiledRule[];
   /** `<type>:<file name>` of files without `target` -> file */
   flattened: Map<string, string>;
   exportIndex?: ExportIndex;
   output: CompiledRegistry;
 }
 
+/** a file of registry, everything known about it is resolved once */
+interface SourceFile {
+  file: string;
+  registry: RegistryState;
+  /** relative to registry dir */
+  path: string;
+  rule?: FileRule;
+  /** `null` if it is not a script */
+  scanned?: ScanResult | null;
+  module?: Module;
+}
+
 /** an installable file */
 interface Module {
   /** `<registry>:<path>` */
   id: string;
-  registry: RegistryState;
-  file: string;
-  /** relative to registry dir */
-  path: string;
+  source: SourceFile;
   preserve: boolean;
   treeshake: boolean;
   edits: Edit[];
@@ -61,132 +70,97 @@ interface Edit {
   link?: { id: string; bindings?: string[]; package?: string };
 }
 
-type ResolvedId =
-  | { id: string; external: false; registry: RegistryState; specifier?: string }
-  /** `id` is the package name */
-  | { id: string; external: true };
-
-/** an import of `specifier`, a rewritten `declaration`, or the bindings `missing` from the package */
-interface PackageImport {
-  specifier?: string;
-  declaration?: string;
-  missing?: string[];
-}
+/** a file of registry, or the name of a package */
+type ResolvedId = { source: SourceFile; specifier?: string } | string;
 
 const OUT_DIR = "./dist/";
-const SOURCE_EXTS = [".tsx", ".ts", ".jsx", ".js"];
 
 export async function compile({ root }: CompileOptions): Promise<CompiledRegistry> {
   const registries: RegistryState[] = [];
   /** package name -> registry */
   const packages = new Map<string, RegistryState>();
-  /** file -> module, in the order to process */
-  const modules = new Map<string, Module>();
-  /** file -> its rule in `files` of registry */
-  const rules = new Map<string, FileRule | undefined>();
-  /** directory -> the registry its files belong to */
-  const owners = new Map<string, RegistryState | undefined>();
-  const scanned = new Map<string, ScanResult | undefined>();
+  const sources = new Map<string, SourceFile>();
+  /** in the order to process */
+  const modules: Module[] = [];
   const errors: string[] = [];
   const resolver = new ResolverFactory({
-    extensions: [...SOURCE_EXTS, ".node"],
+    extensions: [...SCRIPT_EXTS, ".node"],
     extensionAlias: { ".js": [".ts", ".tsx", ".js"], ".jsx": [".tsx", ".jsx"] },
     conditionNames: ["node", "import", "require", "default", "types"],
     tsconfig: "auto",
   });
 
-  // --- scan stage
+  // --- files
 
-  function isTreeshaken(file: string) {
-    const rule = getRule(file);
-    return rule !== undefined && !("alias" in rule) && rule.treeshake;
-  }
+  /** @param registry - the registry of file if known, otherwise the deepest one containing it */
+  function getSource(file: string, registry?: RegistryState): SourceFile | undefined {
+    let source = sources.get(file);
+    if (source) return source;
 
-  function scanFile(file: string) {
-    if (scanned.has(file)) return scanned.get(file);
-    const out = isScannable(path.extname(file))
-      ? scan(file, fs.readFileSync(file, "utf-8"), isTreeshaken(file))
-      : undefined;
-    scanned.set(file, out);
-    return out;
-  }
-
-  function getOwner(file: string) {
-    const key = path.dirname(file);
-    if (owners.has(key)) return owners.get(key);
-
-    let owner: RegistryState | undefined;
-    for (const registry of registries) {
-      if (!file.startsWith(registry.dir + path.sep)) continue;
-      if (!owner || registry.dir.length > owner.dir.length) owner = registry;
-    }
-    owners.set(key, owner);
-    return owner;
-  }
-
-  function getRule(file: string, registry?: RegistryState) {
-    if (rules.has(file)) return rules.get(file);
-    registry ??= getOwner(file);
-    let out: FileRule | undefined;
-
-    const relative = registry && toPosix(path.relative(registry.dir, file));
-    // files outside of `dir` cannot be served
-    if (relative && !relative.startsWith("../")) {
-      for (const { isMatch, rest, rule } of registry!.rules) {
-        if (!isMatch(relative)) continue;
-        out = rule;
-        if (rest === undefined) break;
-
-        const value = relative.slice(rest);
-        if ("alias" in rule) out = { alias: rule.alias.replace(/\*+/, value) };
-        else if ("target" in rule && rule.target) {
-          out = { ...rule, target: rule.target.replace(/\*+/, value) };
-        }
-        break;
+    if (!registry) {
+      for (const item of registries) {
+        if (!file.startsWith(item.dir + path.sep)) continue;
+        if (!registry || item.dir.length > registry.dir.length) registry = item;
       }
+      if (!registry) return;
     }
 
-    rules.set(file, out);
-    return out;
+    const relative = toPosix(path.relative(registry.dir, file));
+    source = {
+      file,
+      registry,
+      path: relative,
+      // files outside of `dir` cannot be served
+      rule: relative.startsWith("../") ? undefined : matchRule(registry.rules, relative),
+    };
+    sources.set(file, source);
+    return source;
   }
 
-  /** @returns the installable file, `undefined` if no rule matches it */
-  function getModule(file: string, registry: RegistryState) {
-    let module = modules.get(file);
-    if (module) return module;
-    const rule = getRule(file, registry);
-    if (!rule || "alias" in rule) return;
+  function scanSource(source: SourceFile): ScanResult | undefined {
+    if (source.scanned === undefined) {
+      const { file, rule } = source;
+      source.scanned = isScannable(path.extname(file))
+        ? scan(file, fs.readFileSync(file, "utf-8"), rule && !("alias" in rule) && rule.treeshake)
+        : null;
+    }
+    return source.scanned ?? undefined;
+  }
+
+  /** @returns `undefined` if the file is not installable */
+  function getModule(source: SourceFile): Module | undefined {
+    const { rule, registry, file } = source;
+    if (source.module || !rule || "alias" in rule) return source.module;
 
     const { preserve = false, treeshake = false, ...output } = rule;
     if (treeshake && !isScannable(path.extname(file))) {
       errors.push(`${file}: only scripts can be tree-shaken`);
     }
 
-    const relative = toPosix(path.relative(registry.dir, file));
-    module = {
-      id: encodeFileId(registry.registry.name, relative),
-      registry,
-      file,
-      path: relative,
+    if (output.type !== "route-handler" && !output.target) {
+      const key = `${output.type}:${path.basename(file)}`;
+      const other = registry.flattened.get(key);
+      if (other) {
+        errors.push(
+          `${file}: installed to the same location as ${other}, set \`target\` in its rule`,
+        );
+      } else registry.flattened.set(key, file);
+    }
+
+    source.module = {
+      id: encodeFileId(registry.registry.name, source.path),
+      source,
       preserve,
       treeshake,
       edits: [],
       output,
     };
-    modules.set(file, module);
-    registry.output.manifest.files[relative] = output;
-
-    if (output.type !== "route-handler" && !output.target) {
-      const key = `${output.type}:${path.basename(file)}`;
-      const other = registry.flattened.get(key);
-      if (other)
-        errors.push(
-          `${file}: installed to the same location as ${other}, set \`target\` in its rule`,
-        );
-      else registry.flattened.set(key, file);
-    }
-    return module;
+    modules.push(source.module);
+    registry.output.manifest.files[source.path] = output;
+    return source.module;
   }
+
+  // --- scan stage
 
   function scanRegistry(registry: Registry): CompiledRegistry {
     const dir = path.resolve(registry.dir);
@@ -207,57 +181,20 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
       },
     };
     registries.push(state);
-    resolveEntries(state);
-    for (const pattern in registry.files) {
-      const rest = getRestStart(pattern);
-      if (rest === undefined && !fs.existsSync(path.join(dir, pattern))) {
-        errors.push(`registry "${registry.name}": cannot find "${pattern}" of \`files\``);
-      }
-      state.rules.push({ isMatch: picomatch(pattern), rest, rule: registry.files[pattern] });
-    }
 
     const { name } = state.packageJson;
     if (name && !packages.has(name)) packages.set(name, state);
 
-    for (const key in registry.components) {
-      const value = registry.components[key];
-      const { entry, ...info } =
-        typeof value === "object" && !Array.isArray(value) ? value : { entry: value };
-      // `*` in name: a component per entry
-      const shared: ManifestComponent | false = !key.includes("*") && {
-        name: key,
-        ...info,
-        files: [],
-      };
-      if (shared) state.output.manifest.components.push(shared);
-
-      for (const item of typeof entry === "string" ? [entry] : entry) {
-        const start = getRestStart(item);
-        let matched: string[] = [];
-        if (start !== undefined) matched = glob(dir, item, start);
-        else if (fs.existsSync(path.join(dir, item))) matched = [toPosix(path.normalize(item))];
-
-        if (matched.length === 0) {
-          errors.push(`registry "${registry.name}": cannot find "${item}" of component "${key}"`);
-        }
-
-        for (const file of matched) {
-          if (!getModule(path.join(dir, file), state)) {
-            errors.push(
-              `registry "${registry.name}": "${file}" of component "${key}" matches no rule in \`files\``,
-            );
-          } else if (shared) {
-            shared.files.push(file);
-          } else {
-            state.output.manifest.components.push({
-              name: key.replace("*", file.slice(start, -path.extname(file).length)),
-              ...info,
-              files: [file],
-            });
-          }
-        }
+    resolveEntries(state);
+    for (const pattern in registry.files) {
+      const rule = compileRule(pattern, registry.files[pattern]);
+      if (rule.rest === undefined && !fs.existsSync(path.join(dir, pattern))) {
+        errors.push(`registry "${registry.name}": cannot find "${pattern}" of \`files\``);
       }
+      state.rules.push(rule);
     }
+
+    for (const key in registry.components) scanComponent(state, key);
 
     if (registry.subRegistries) {
       state.output.manifest.registries = [];
@@ -292,139 +229,121 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
     }
   }
 
+  function scanComponent(state: RegistryState, key: string) {
+    const { dir, registry } = state;
+    const { components } = state.output.manifest;
+    const value = registry.components![key];
+    const { entry, ...info } =
+      typeof value === "object" && !Array.isArray(value) ? value : { entry: value };
+    // `*` in name: a component per entry
+    const shared: ManifestComponent | false = !key.includes("*") && {
+      name: key,
+      ...info,
+      files: [],
+    };
+    if (shared) components.push(shared);
+
+    for (const item of typeof entry === "string" ? [entry] : entry) {
+      const start = getRestStart(item);
+      let matched: string[] = [];
+      if (start !== undefined) matched = glob(dir, item, start);
+      else if (fs.existsSync(path.join(dir, item))) matched = [toPosix(path.normalize(item))];
+
+      if (matched.length === 0) {
+        errors.push(`registry "${registry.name}": cannot find "${item}" of component "${key}"`);
+      }
+
+      for (const file of matched) {
+        if (!getModule(getSource(path.join(dir, file), state)!)) {
+          errors.push(
+            `registry "${registry.name}": "${file}" of component "${key}" matches no rule in \`files\``,
+          );
+        } else if (shared) {
+          shared.files.push(file);
+        } else {
+          components.push({
+            name: key.replace("*", file.slice(start, -path.extname(file).length)),
+            ...info,
+            files: [file],
+          });
+        }
+      }
+    }
+  }
+
   // --- link stage
 
-  function resolveId(specifier: string, importer: string): ResolvedId | undefined {
+  /** @param registry - of importer */
+  function resolveId(
+    specifier: string,
+    importer: string,
+    registry: RegistryState,
+  ): ResolvedId | undefined {
     const isBare = !specifier.startsWith(".") && !path.isAbsolute(specifier);
 
     if (isBare) {
       const name = getPackageName(specifier);
-      const registry = packages.get(name);
-      if (registry) {
-        const id = registry.entries.get(specifier);
-        if (!id) return { id: name, external: true };
-        return resolveAlias({ id, external: false, registry, specifier });
+      const target = packages.get(name);
+      if (target) {
+        const entry = target.entries.get(specifier);
+        const source = entry && getSource(entry);
+        return source ? resolveAlias(source, specifier) : name;
       }
 
       // most of the resolution time is spent in `node_modules`
-      if (isDependency(name, getOwner(importer))) return { id: name, external: true };
+      if (getDeclaredVersion(registry.packageJson, name)) return name;
     }
 
-    const { path: id } = resolver.resolveFileSync(importer, specifier);
-    if (id && !id.includes(`${path.sep}node_modules${path.sep}`)) {
-      const owner = getOwner(id);
-      if (owner) return resolveAlias({ id, external: false, registry: owner });
+    const { path: file } = resolver.resolveFileSync(importer, specifier);
+    const source =
+      file && !file.includes(`${path.sep}node_modules${path.sep}`) ? getSource(file) : undefined;
+    if (source) return resolveAlias(source);
+    if (isBare) return getPackageName(specifier);
+  }
+
+  function resolveAlias(source: SourceFile, specifier?: string): ResolvedId | undefined {
+    const { rule, registry } = source;
+    if (!rule || !("alias" in rule)) return { source, specifier };
+
+    const out = resolveId(rule.alias, path.join(registry.dir, "index.ts"), registry);
+    if (!out || typeof out === "string") {
+      errors.push(`${source.file}: cannot resolve alias "${rule.alias}"`);
     }
-
-    if (isBare) return { id: getPackageName(specifier), external: true };
-  }
-
-  function isDependency(name: string, registry: RegistryState | undefined) {
-    if (!registry) return false;
-    const { dependencies, peerDependencies, devDependencies } = registry.packageJson;
-    return (
-      dependencies?.[name] !== undefined ||
-      peerDependencies?.[name] !== undefined ||
-      devDependencies?.[name] !== undefined
-    );
-  }
-
-  function resolveAlias(
-    resolved: Extract<ResolvedId, { external: false }>,
-  ): ResolvedId | undefined {
-    const rule = getRule(resolved.id, resolved.registry);
-    if (!rule || !("alias" in rule)) return resolved;
-
-    const importer = path.join(resolved.registry.dir, "index.ts");
-    const out = resolveId(rule.alias, importer);
-    if (!out || out.external) errors.push(`${resolved.id}: cannot resolve alias "${rule.alias}"`);
     return out;
   }
 
-  function getExportIndex(registry: RegistryState): ExportIndex {
-    return (registry.exportIndex ??= buildExportIndex(
-      registry.entries,
-      scanFile,
-      (specifier, importer) => {
-        const resolved = resolveId(specifier, importer);
-        if (resolved && !resolved.external) return resolved.id;
-      },
-    ));
-  }
-
-  /**
-   * @returns the package import of `record`, or bindings that the package doesn't export.
-   */
-  function toPackageImport(
+  function getPackageImport(
     record: ImportRecord,
-    target: Extract<ResolvedId, { external: false }>,
+    { source, specifier }: Exclude<ResolvedId, string>,
     quote: string,
   ): PackageImport {
-    if (target.registry.packageJson.private) return { missing: record.bindings ?? ["*"] };
-    if (target.specifier) return { specifier: target.specifier };
-    const index = getExportIndex(target.registry);
-    const entry = index.modules.get(target.id);
-    if (entry) return { specifier: entry };
-    if (!record.bindings) return { missing: ["*"] };
+    const { registry } = source;
+    if (registry.packageJson.private) return { missing: record.bindings ?? ["*"] };
+    if (specifier) return { specifier };
 
-    const missing: string[] = [];
-    let specifier: string | undefined;
-    let renamed = false;
-    for (const name of record.bindings) {
-      const found = index.names.get(nameKey(target.id, name));
-      if (!found) {
-        missing.push(name);
-        continue;
-      }
-
-      renamed ||= found.name !== name || (specifier !== undefined && specifier !== found.specifier);
-      specifier = found.specifier;
-    }
-
-    if (missing.length > 0) return { missing };
-    if (!renamed) return { specifier: specifier! };
-    if (!record.declaration) return { missing: record.bindings };
-
-    // specifier -> import clause
-    const clauses = new Map<string, { default?: string; named: string[] }>();
-    for (const binding of record.declaration.bindings) {
-      const found = index.names.get(nameKey(target.id, binding.imported))!;
-      let clause = clauses.get(found.specifier);
-      if (!clause) {
-        clause = { named: [] };
-        clauses.set(found.specifier, clause);
-      }
-
-      if (found.name === "default" && !binding.isType) clause.default = binding.local;
-      else {
-        const text =
-          found.name === binding.local ? binding.local : `${found.name} as ${binding.local}`;
-        clause.named.push(binding.isType ? `type ${text}` : text);
-      }
-    }
-
-    const lines: string[] = [];
-    for (const [k, clause] of clauses) {
-      const parts: string[] = [];
-      if (clause.default) parts.push(clause.default);
-      if (clause.named.length > 0) parts.push(`{ ${clause.named.join(", ")} }`);
-      lines.push(`import ${parts.join(", ")} from ${quote}${k}${quote};`);
-    }
-    return { declaration: lines.join("\n") };
+    registry.exportIndex ??= buildExportIndex(
+      registry.entries,
+      (file) => {
+        const entry = getSource(file);
+        return entry && scanSource(entry);
+      },
+      (specifier, importer) => {
+        const resolved = resolveId(specifier, importer, registry);
+        if (typeof resolved === "object") return resolved.source.file;
+      },
+    );
+    return toPackageImport(registry.exportIndex, source.file, record, quote);
   }
 
   /** @param pos - position of the import, tree-shaken modules carry dependencies on statements */
   function addDependency(module: Module, name: string, pos: number) {
-    const { registry, packageJson, dir } = module.registry;
+    const { registry, packageJson, dir } = module.source.registry;
     let version: string | null | undefined;
 
     if (registry.dependencies && name in registry.dependencies) {
       version = registry.dependencies[name];
     } else {
-      version =
-        packageJson.dependencies?.[name] ??
-        packageJson.peerDependencies?.[name] ??
-        packageJson.devDependencies?.[name];
+      version = getDeclaredVersion(packageJson, name);
 
       const pkg = packages.get(name)?.packageJson;
       if (pkg) version = `^${pkg.version}`;
@@ -445,43 +364,47 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
       version = packageJson.devDependencies[types];
     } else if (version === undefined) {
       errors.push(
-        `${module.file}: "${name}" is not a dependency of its package. Add it to package.json or \`dependencies\` of registry, a path alias means the file is excluded by its tsconfig.json.`,
+        `${module.source.file}: "${name}" is not a dependency of its package. Add it to package.json or \`dependencies\` of registry, a path alias means the file is excluded by its tsconfig.json.`,
       );
       return;
     }
 
-    const stmts = scanFile(module.file)?.stmts;
+    const stmts = scanSource(module.source)?.stmts;
     const output = stmts ? stmts[stmtAt(stmts, pos)] : module.output;
     if (name.startsWith("@types/")) (output.devDependencies ??= {})[name] = version;
     else (output.dependencies ??= {})[name] = version;
   }
 
-  function isExternal({ registry, id }: Extract<ResolvedId, { external: false }>) {
+  function isExternal({ registry, path: file }: SourceFile) {
     const { external } = registry.registry;
     if (!external) return false;
-    const relative = toPosix(path.relative(registry.dir, id));
-    return external.some((v) => relative === v || relative.startsWith(v + "/"));
+    for (const item of external) {
+      if (file === item || file.startsWith(`${item}/`)) return true;
+    }
+    return false;
   }
 
   function linkImport(module: Module, record: ImportRecord, quote: string) {
     const { specifier, start, end, bindings } = record;
     if (isBuiltin(specifier) || specifier.startsWith(MACRO_PATH)) return;
+    const { file, registry } = module.source;
 
-    const resolved = resolveId(specifier, module.file);
+    const resolved = resolveId(specifier, file, registry);
     if (!resolved) {
       // an URL may point to anything
-      if (record.kind !== "new-url") errors.push(`${module.file}: cannot resolve "${specifier}"`);
+      if (record.kind !== "new-url") errors.push(`${file}: cannot resolve "${specifier}"`);
       return;
     }
 
-    if (resolved.external) {
-      if (record.kind !== "new-url") addDependency(module, resolved.id, start);
+    if (typeof resolved === "string") {
+      if (record.kind !== "new-url") addDependency(module, resolved, start);
       return;
     }
 
-    if (isExternal(resolved)) return;
-    const target = getModule(resolved.id, resolved.registry);
-    const swap = !target || target.preserve ? toPackageImport(record, resolved, quote) : {};
+    const { source } = resolved;
+    if (isExternal(source)) return;
+    const target = getModule(source);
+    const swap = !target || target.preserve ? getPackageImport(record, resolved, quote) : {};
 
     // preserved modules without a public equivalent are linked as usual
     if (swap.specifier === undefined && (target || swap.declaration === undefined)) {
@@ -495,14 +418,13 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
         return;
       }
 
-      const { dir, packageJson, registry } = resolved.registry;
       errors.push(
-        `${module.file}: "${specifier}" matches no rule in \`files\` of registry "${registry.name}", and ${swap.missing!.join(", ")} of it is not a public export of "${packageJson.name}". Add a rule for ${toPosix(path.relative(dir, resolved.id))}, or export it from the package.`,
+        `${file}: "${specifier}" matches no rule in \`files\` of registry "${source.registry.registry.name}", and ${swap.missing!.join(", ")} of it is not a public export of "${source.registry.packageJson.name}". Add a rule for ${source.path}, or export it from the package.`,
       );
       return;
     }
 
-    addDependency(module, resolved.registry.packageJson.name!, start);
+    addDependency(module, source.registry.packageJson.name!, start);
     if (swap.specifier !== undefined) {
       module.edits.push({
         start,
@@ -520,94 +442,58 @@ export async function compile({ root }: CompileOptions): Promise<CompiledRegistr
     }
   }
 
-  // --- generate stage
-
-  function render(module: Module) {
-    const { registry, file, edits, output } = module;
-    const scanned = scanFile(file);
-    if (!scanned) {
-      registry.output.files.set(module.path, fs.readFileSync(file));
-      return;
-    }
-
-    const { code, stmts } = scanned;
-    edits.sort((a, b) => a.start - b.start);
-    let out = "";
-    let last = 0;
-    for (const edit of edits) {
-      out += code.slice(last, edit.start);
-      if (edit.link) {
-        (output.imports ??= []).push({
-          ...edit.link,
-          start: out.length,
-        });
-      }
-      out += edit.text;
-      last = edit.end;
-    }
-    registry.output.files.set(module.path, out + code.slice(last));
-    if (!stmts) return;
-
-    // edits are inside statements
-    let delta = 0;
-    let i = 0;
-    for (const stmt of stmts) {
-      for (; i < edits.length && edits[i].start < stmt.end; i++) {
-        delta += edits[i].text.length - (edits[i].end - edits[i].start);
-      }
-      stmt.end += delta;
-    }
-    output.stmtInfos = stmts;
-  }
-
   const output = scanRegistry(root);
 
   // modules are appended on the way
-  for (const module of modules.values()) {
-    const result = scanFile(module.file);
-    if (!result) continue;
-    for (const record of result.imports) linkImport(module, record, result.code[record.start - 1]);
+  for (const module of modules) {
+    const scanned = scanSource(module.source);
+    if (!scanned) continue;
+    for (const record of scanned.imports) {
+      linkImport(module, record, scanned.code[record.start - 1]);
+    }
   }
 
   if (errors.length > 0) throw new Error(errors.join("\n\n"));
 
-  for (const module of modules.values()) render(module);
+  // --- generate stage
+
+  for (const { source, edits, output } of modules) {
+    const { files } = source.registry.output;
+    const scanned = scanSource(source);
+    if (!scanned) {
+      files.set(source.path, fs.readFileSync(source.file));
+      continue;
+    }
+
+    const { code, stmts } = scanned;
+    const s = new MagicString(code);
+    edits.sort((a, b) => a.start - b.start);
+    let delta = 0;
+    let i = 0;
+
+    // edits are inside statements, links & statements are positioned in the output
+    for (const stmt of stmts ?? [{ end: code.length }]) {
+      for (; i < edits.length && edits[i].start < stmt.end; i++) {
+        const { start, end, text, link } = edits[i];
+        if (link) (output.imports ??= []).push({ ...link, start: start + delta });
+        s.update(start, end, text);
+        delta += text.length - (end - start);
+      }
+      stmt.end += delta;
+    }
+
+    if (stmts) output.stmtInfos = stmts;
+    files.set(source.path, s.toString());
+  }
   return output;
 }
 
-/**
- * Same matcher as `files`, as the glob of Node.js has a different syntax.
- *
- * @param start - the result of `getRestStart()`, to skip directories before it
- * @returns matched files relative to `dir`, sorted
- */
-function glob(dir: string, pattern: string, start: number): string[] {
-  const isMatch = picomatch(pattern);
-  const out: string[] = [];
-
-  /** @param prefix - of file paths, empty or ends with `/` */
-  function walk(prefix: string) {
-    for (const entry of fs.readdirSync(path.join(dir, prefix), { withFileTypes: true })) {
-      const file = prefix + entry.name;
-      if (!entry.isDirectory()) {
-        if (isMatch(file)) out.push(file);
-      } else if (entry.name !== "node_modules" && !entry.name.startsWith(".")) walk(`${file}/`);
-    }
-  }
-
-  const prefix = pattern.slice(0, start);
-  if (fs.existsSync(path.join(dir, prefix))) walk(prefix);
-  return out.sort();
-}
-
-/** @returns where the path after the fixed part of pattern starts, `undefined` for a path */
-function getRestStart(pattern: string) {
-  const { base, isGlob } = picomatch.scan(pattern);
-  if (isGlob) return base ? base.length + 1 : 0;
+function getDeclaredVersion(pkg: PackageJson, name: string): string | undefined {
+  return pkg.dependencies?.[name] ?? pkg.peerDependencies?.[name] ?? pkg.devDependencies?.[name];
 }
 
 function findSource(base: string) {
-  for (const ext of SOURCE_EXTS) {
+  for (const ext of SCRIPT_EXTS) {
     if (fs.existsSync(base + ext)) return base + ext;
   }
 }
@@ -615,8 +501,4 @@ function findSource(base: string) {
 function getPackageName(specifier: string) {
   const parts = specifier.split("/", 2);
   return specifier.startsWith("@") ? parts.join("/") : parts[0];
-}
-
-function toPosix(file: string) {
-  return path.sep === "/" ? file : file.replaceAll(path.sep, "/");
 }

@@ -1,4 +1,5 @@
-export const JS_LANGS = ["js", "jsx", "ts", "tsx", "dts"] as const;
+/** scripts that can import other files, in the order to resolve */
+export const SCRIPT_EXTS = [".tsx", ".ts", ".jsx", ".js", ".mts", ".mjs"];
 export const SUPPORTED_FRAMEWORKS = [
   "next",
   "waku",

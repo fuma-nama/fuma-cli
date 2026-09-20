@@ -1,5 +1,6 @@
 import type { Import, Symbol } from "yuku-analyzer";
 import type { StmtInfo } from "@/registry/schema";
+import { SCRIPT_EXTS } from "@/constants";
 import { analyzeFile } from "@/utils/analyze";
 import { scanStmts } from "./stmt";
 
@@ -43,10 +44,8 @@ export interface ScanResult {
   exports: ExportRecord[];
 }
 
-const EXTS = new Set([".js", ".mjs", ".jsx", ".ts", ".mts", ".tsx"]);
-
 export function isScannable(ext: string): boolean {
-  return EXTS.has(ext);
+  return SCRIPT_EXTS.includes(ext);
 }
 
 /**

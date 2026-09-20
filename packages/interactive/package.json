@@ -28,7 +28,6 @@
   "dependencies": {
     "@clack/prompts": "^1.8.1",
     "fuma-cli": "workspace:*",
-    "package-manager-detector": "^1.8.0",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {

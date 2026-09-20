@@ -1,13 +1,14 @@
-import path from "node:path";
 import fs from "node:fs";
+import { findPackageJSON } from "node:module";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 export function findNearestPackageJson(dir: string): string | undefined {
-  while (true) {
-    const file = path.join(dir, "package.json");
-    if (fs.existsSync(file)) return file;
+  const file = findPackageJSON(pathToFileURL(dir + path.sep));
+  // it gives back the input when nothing is found
+  if (file && fs.existsSync(file) && path.basename(file) === "package.json") return file;
+}
 
-    const parent = path.dirname(dir);
-    if (dir === parent) return;
-    dir = parent;
-  }
+export function toPosix(file: string) {
+  return path.sep === "/" ? file : file.replaceAll(path.sep, "/");
 }

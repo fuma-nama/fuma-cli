@@ -1,14 +1,16 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { type Framework, JS_LANGS } from "@/constants";
+import MagicString from "magic-string";
+import { type Framework, SCRIPT_EXTS } from "@/constants";
 import { decodeFileId, encodeFileId } from "@/registry/id";
 import type { Manifest, ManifestFile, ManifestImport, StmtInfo } from "@/registry/schema";
 import type { RegistryConnector } from "@/registry/connector";
 import { createDeps, type DependencyManager } from "@/registry/installer/dep-manager";
 import type { Awaitable } from "@/types";
 import { detectFramework } from "@/detect";
-import { routeHandlerPlugin } from "@/macros/route-handler.plugin";
+import { toPosix } from "@/utils/fs";
+import { routeHandlerPlugin } from "./plugins/route-handler";
 
 export interface LinkedFile {
   id: string;
@@ -53,7 +55,10 @@ export interface InstallerPlugin {
   /** decide the output path of a file, an `external` file is imported from there instead of installed */
   resolveId?: (
     this: PluginContext,
-    file: Omit<LinkedFile, "output" | "external">,
+    file: Omit<LinkedFile, "output" | "external"> & {
+      /** the default location, `undefined` for route handlers */
+      output?: string;
+    },
   ) => Awaitable<{ id: string; external?: boolean } | undefined>;
   /** executed after imports are linked */
   transform?: (
@@ -267,8 +272,17 @@ export class ComponentInstaller {
     if (!info) throw new Error(`cannot find file ${id}`);
 
     const base = { id, registry, path: file, info };
+    let output: string | undefined;
+    if (info.type !== "route-handler") {
+      const dir = this.destinations[info.type];
+      output = path.resolve(
+        this.context.baseDir,
+        info.target?.replace("<dir>", dir) ?? path.join(dir, path.basename(file)),
+      );
+    }
+
     for (const plugin of this.plugins) {
-      const resolved = await plugin.resolveId?.call(this.context, base);
+      const resolved = await plugin.resolveId?.call(this.context, { ...base, output });
       if (resolved) {
         return {
           ...base,
@@ -278,16 +292,8 @@ export class ComponentInstaller {
       }
     }
 
-    if (info.type === "route-handler") throw new Error(`no plugin resolved ${id}`);
-    const dir = this.destinations[info.type];
-    return {
-      ...base,
-      output: path.resolve(
-        this.context.baseDir,
-        info.target?.replace("<dir>", dir) ?? path.join(dir, path.basename(file)),
-      ),
-      external: false,
-    };
+    if (!output) throw new Error(`no plugin resolved ${id}`);
+    return { ...base, output, external: false };
   }
 
   private async render(
@@ -307,40 +313,40 @@ export class ComponentInstaller {
     );
     const existing = merge ? undefined : await fs.readFile(output).catch(() => undefined);
 
-    if (!JS_LANGS.some((lang) => output.endsWith(`.${lang}`))) {
+    if (!SCRIPT_EXTS.includes(path.extname(output))) {
       return { ...file, content: bytes, status: getStatus(existing?.equals(bytes)) };
     }
 
-    const source = new TextDecoder().decode(bytes);
-    let head = "";
-    let code = "";
-    let i = 0;
-    const stmts: SelectedStmt[] = entry.stmts ?? [{ start: 0, end: source.length }];
-    for (const stmt of stmts) {
-      let text = "";
-      let last = stmt.start;
-      for (; i < imports.length && imports[i].start < stmt.end; i++) {
-        const item = imports[i];
-        const target = await this.link(item.id);
-        const usePackage = item.package && !closure.has(target.id) && !existsSync(target.output);
+    const source = new MagicString(new TextDecoder().decode(bytes));
+    for (const item of imports) {
+      const target = await this.link(item.id);
+      const usePackage = item.package && !closure.has(target.id) && !existsSync(target.output);
 
-        text += source.slice(last, item.start);
-        text += usePackage ? item.package : toImportSpecifier(output, target.output);
-        last = item.start + (item.package ?? item.id).length;
-      }
-      text += source.slice(last, stmt.end);
-
-      if (merge && stmt.import) head += text;
-      else code += text;
+      source.update(
+        item.start,
+        item.start + (item.package ?? item.id).length,
+        usePackage ? item.package! : toImportSpecifier(output, target.output),
+      );
     }
 
-    if (merge) {
-      const { importEnd } = merge;
-      if (head) head = importEnd > 0 ? `\n${head.trim()}` : `${head.trim()}\n\n`;
-      head = merge.code.slice(0, importEnd) + head + merge.code.slice(importEnd);
-      code = code ? `${head.trimEnd()}\n\n${code.trim()}\n` : head;
-    } else if (entry.stmts) {
-      code = `${code.trim()}\n`;
+    let code: string;
+    if (!entry.stmts) code = source.toString();
+    else {
+      let head = "";
+      code = "";
+      for (const stmt of entry.stmts) {
+        const text = source.slice(stmt.start, stmt.end);
+        if (merge && stmt.import) head += text;
+        else code += text;
+      }
+
+      if (merge) {
+        const { importEnd } = merge;
+        if (head) head = importEnd > 0 ? `\n${head.trim()}` : `${head.trim()}\n\n`;
+        const merged = new MagicString(merge.code).appendLeft(importEnd, head);
+        if (code) merged.trimEnd().append(`\n\n${code.trim()}\n`);
+        code = merged.toString();
+      } else code = `${code.trim()}\n`;
     }
 
     for (const plugin of this.plugins) {
@@ -413,14 +419,15 @@ function getStatus(unchanged: boolean | undefined): PlannedFile["status"] {
  */
 function toImportSpecifier(sourceFile: string, referenceFile: string): string {
   const extname = path.extname(referenceFile);
-  const removeExt = JS_LANGS.some((lang) => `.${lang}` === extname);
+  // `.mts` & `.mjs` cannot be imported without extension
+  const removeExt = /^\.[jt]sx?$/.test(extname);
 
-  let importPath = path
-    .relative(
+  let importPath = toPosix(
+    path.relative(
       path.dirname(sourceFile),
       removeExt ? referenceFile.slice(0, -extname.length) : referenceFile,
-    )
-    .replaceAll(path.sep, "/");
+    ),
+  );
 
   if (removeExt && importPath.endsWith("/index")) {
     importPath = importPath.slice(0, -"/index".length);
@@ -430,4 +437,4 @@ function toImportSpecifier(sourceFile: string, referenceFile: string): string {
 }
 
 export type { DependencyManager };
-export { reuseUI, type ReuseUIOptions } from "./reuse-ui";
+export { reuseUI, type ReuseUIOptions } from "./plugins/reuse-ui";

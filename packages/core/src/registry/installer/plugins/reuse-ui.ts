@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import type { InstallerPlugin } from ".";
+import type { InstallerPlugin } from "..";
 
 export interface ReuseUIOptions {
   /**
@@ -22,13 +22,9 @@ export function reuseUI({ files = {} }: ReuseUIOptions = {}): InstallerPlugin {
         return { id: path.resolve(this.baseDir, files[file.path]), external: true };
       }
 
-      if (file.info.type !== "ui") return;
-      const existing = path.resolve(
-        this.baseDir,
-        file.info.target?.replace("<dir>", this.outDir.ui) ??
-          path.join(this.outDir.ui, path.basename(file.path)),
-      );
-      if (existsSync(existing)) return { id: existing, external: true };
+      if (file.info.type === "ui" && file.output && existsSync(file.output)) {
+        return { id: file.output, external: true };
+      }
     },
   };
 }

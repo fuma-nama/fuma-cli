@@ -43,26 +43,23 @@ An `external` file is not installed: imports of it point to `id`, and its own im
 
 ```ts
 import { existsSync } from "node:fs";
-import path from "node:path";
 
-// reuse the consumer's Shadcn UI components
-const reuseUI: InstallerPlugin = {
-  name: "reuse-ui",
+// never touch the files that consumer already has
+const keepExisting: InstallerPlugin = {
+  name: "keep-existing",
   resolveId(file) {
-    if (file.info.type !== "ui") return;
-
-    const existing = path.join(this.baseDir, "components/ui", path.basename(file.path));
-    if (existsSync(existing)) return { id: existing, external: true };
+    if (file.output && existsSync(file.output)) return { id: file.output, external: true };
   },
 };
 ```
 
-| Field           | Description                                |
-| --------------- | ------------------------------------------ |
-| `file.id`       | `<registry>:<path>`                        |
-| `file.registry` | Name of registry, after `registryAliases`. |
-| `file.path`     | Path in registry.                          |
-| `file.info`     | The manifest entry: `type`, `target`, etc. |
+| Field           | Description                                           |
+| --------------- | ----------------------------------------------------- |
+| `file.id`       | `<registry>:<path>`                                   |
+| `file.registry` | Name of registry, after `registryAliases`.            |
+| `file.path`     | Path in registry.                                     |
+| `file.info`     | The manifest entry: `type`, `target`, etc.            |
+| `file.output`   | The default location, `undefined` for route handlers. |
 
 ### `transform`
 
