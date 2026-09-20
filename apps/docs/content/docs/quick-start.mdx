@@ -7,59 +7,55 @@ description: Getting started with Fuma CLI.
 
 ### Installation [step]
 
-You can install the package to get started:
-
 ```npm
 npm i fuma-cli
 ```
 
-### Define Registry [step]
+### Add Sidecars [step]
 
-Specify the base directory for your registry.
+A sidecar is a `<name>.install.ts` file next to the file it describes.
 
-```ts title="my-repo/registry.ts"
-import type { Registry } from "fuma-cli/compiler";
+```ts title="src/button.install.ts"
+import { defineInstall } from "fuma-cli/compiler";
 
-// my-repo/
-const dir = path.dirname(fileURLToPath(import.meta.url));
-
-export const registry: Registry = {
-  name: "acme-ui",
-  dir,
-  components: [
-    {
-      name: "button",
-      files: [
-        {
-          // `type` specifies how the file should be installed
-          type: "ui",
-          path: "src/button.tsx",
-
-          // optional: change the installed path, <dir> refers to the default destination
-          target: "<dir>/primitives/button.tsx",
-        },
-      ],
-    },
-  ],
-};
+export default defineInstall({
+  // `type` specifies where the file is installed
+  type: "ui",
+  // the component that consumers install
+  component: { name: "button", title: "Button" },
+});
 ```
 
-<Callout type="warn" title="Common pitfalls">
-  The same file cannot belong to two different top-level components.
+Files imported by `button.tsx` don't need to join the component, they are installed along:
+
+```ts title="src/utils/cn.install.ts"
+import { defineInstall } from "fuma-cli/compiler";
+
+export default defineInstall({ type: "lib" });
+```
+
+See [Sidecar](/compiler/sidecar) for all options.
+
+<Callout title="Exclude sidecars from your build">
+  Sidecars are only read by the compiler, make sure your bundler & package `files` ignore
+  `*.install.ts`.
 </Callout>
 
-Now compile & write the output via a script:
+### Compile [step]
 
-```ts title="my-repo/scripts/compile.ts"
+```ts title="scripts/compile.ts"
 import { compile, writeRegistry } from "fuma-cli/compiler";
-import { registry } from "../registry";
 
-const out = await compile({ root: registry });
+const out = await compile({
+  root: {
+    name: "acme-ui",
+    // scanned for sidecars
+    dir: "src",
+  },
+});
 
 await writeRegistry(out, {
-  dir: "./public",
-
-  // optional: clean previous outputs
+  dir: "./public/registry",
   cleanDir: true,
 });
 ```
@@ -72,7 +68,7 @@ node ./scripts/compile.ts
 bun ./scripts/compile.ts
 ```
 
-You need to serve the output files in `public` folder, here we assume all files under `public` are already served via `https://acme-ui.com`.
+Serve the output, here we assume it is available at `https://acme-ui.com/registry`.
 
 ### Implement Installer [step]
 
@@ -82,141 +78,70 @@ Initialize your own CLI package and install dependencies:
 npm i fuma-cli @clack/prompts
 ```
 
-Fuma CLI installer is headless, we will use `@clack/prompts` for creating TUI.
+Fuma CLI installer is headless, we will use `@clack/prompts` for the TUI.
 
-```ts title="my-cli/src/installer.ts"
+```ts title="my-cli/src/install.ts"
 import { ComponentInstaller } from "fuma-cli/registry/installer";
 import { HttpRegistryConnector } from "fuma-cli/registry/connector";
-import type { LoadedConfig } from "@/config";
-import { confirm, isCancel } from "@clack/prompts";
-import picocolors from "picocolors";
+import { confirm, isCancel, log } from "@clack/prompts";
 
-export class MyComponentInstaller extends ComponentInstaller {
-  constructor() {
-    const connector = new HttpRegistryConnector("https://acme-ui.com");
+const installer = new ComponentInstaller(
+  new HttpRegistryConnector("https://acme-ui.com/registry"),
+  {
+    io: {
+      async confirmFileOverride(file) {
+        const value = await confirm({
+          message: `Do you want to override ${file.output}?`,
+          initialValue: false,
+        });
 
-    super(connector, {
-      // optional: where to write components
-      outDir: {
-        base: "src",
+        return !isCancel(value) && value;
       },
-
-      // use our own TUI
-      io: {
-        onWarn(message) {
-          console.warn(message);
-        },
-        async confirmFileOverride(options) {
-          const value = await confirm({
-            message: `Do you want to override ${options.path}?`,
-            initialValue: false,
-          });
-
-          if (isCancel(value)) {
-            outro("Installation terminated");
-            process.exit(0);
-          }
-
-          return value;
-        },
-        onFileDownloaded(options) {
-          console.log(`downloaded ${options.path}`);
-        },
+      onFileWritten(file) {
+        log.step(file.output);
       },
-    });
-  }
+    },
+  },
+);
+
+export async function install(name: string) {
+  const plan = await installer.install(name);
+  const deps = await plan.deps();
+
+  if (deps.hasRequired()) await deps.installRequired();
 }
 ```
-
-### Create Command [step]
-
-Create a command that installs your `button` component.
-
-```ts title="my-cli/src/commands/install.ts"
-import { isCancel, confirm, box } from "@clack/prompts";
-import { MyComponentInstaller } from "../installer";
-
-export async function install(targets: string[]) {
-  const installer = new MyComponentInstaller();
-
-  for (const target of targets) {
-    const deps = await installer.install(target).then((res) => res.deps());
-
-    if (deps.hasRequired()) {
-      box([...deps.dependencies, ...deps.devDependencies].join("\n"), "New Dependencies");
-      const value = await confirm({
-        message: `Do you want to install dependencies?`,
-      });
-
-      if (isCancel(value)) {
-        outro("Installation terminated");
-        process.exit(0);
-      }
-
-      if (value) {
-        await deps.installRequired();
-      } else {
-        await deps.writeRequired();
-      }
-    }
-  }
-}
-```
-
-The consumer can now execute the command to install `button`, e.g.
 
 ```ts title="scripts/test-install.ts"
-import { install } from "./commands/install";
+import { install } from "../src/install";
 
-await install(["button"]);
-```
-
-```bash
-node scripts/test-install.ts
+await install("button");
 ```
 
 ## Examples
 
 ### Interactive Install UI
 
-Allow user to select components to install.
+Let the user select components from the manifest.
 
 ```ts
-import { isCancel, autocompleteMultiselect, outro, spinner } from "@clack/prompts";
-import picocolors from "picocolors";
-import { RegistryConnector } from "fuma-cli/registry/connector";
-import { install } from "@/commands/install";
+import { autocompleteMultiselect, isCancel } from "@clack/prompts";
 
-interface AddOption {
-  label: string;
-  value: string;
-  hint?: string;
+const manifest = await installer.fetchManifest();
+const options = [];
+for (const item of manifest.components) {
+  if (item.unlisted) continue;
+  options.push({ label: item.title ?? item.name, value: item.name, hint: item.description });
 }
 
-export async function add() {
-  // add your connector
-  const connector: RegistryConnector;
+const value = await autocompleteMultiselect({
+  message: "Select components to install",
+  options,
+});
 
-  const spin = spinner();
-  spin.start("fetching registry");
-  const info = await connector.fetchRegistryInfo();
-
-  spin.stop(picocolors.bold(picocolors.greenBright("registry fetched")));
-  const value = await autocompleteMultiselect({
-    message: "Select components to install",
-    options: info.indexes.map<AddOption>((item) => ({
-      label: item.title ?? item.name,
-      value: item.name,
-      hint: item.description,
-    })),
-  });
-
-  if (isCancel(value)) {
-    outro("Ended");
-    return;
-  }
-
-  await install(value);
-  outro(picocolors.bold(picocolors.greenBright("Successful")));
+if (!isCancel(value)) {
+  for (const name of value) await install(name);
 }
 ```
+
+`@fuma-cli/interactive` ships this UI pre-built.

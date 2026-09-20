@@ -1,10 +1,9 @@
 import path from "node:path";
 import MagicString from "magic-string";
-import { Visitor } from "oxc-parser";
+import { parseSync } from "oxc-parser";
 import type {
   Argument,
   CallExpression,
-  Expression,
   ImportDeclaration,
   ObjectExpression,
   ParamPattern,
@@ -14,56 +13,47 @@ import type {
 import type { Framework } from "@/constants";
 import type { RouteHandlerHttpMethod, StaticInfo } from "./route-handler";
 import { dedent, indent } from "@/utils/format";
-import { collectMacroBindings } from "@/utils/ast";
 
 const reactRouterLoaderMethods = new Set(["GET", "HEAD", "OPTIONS"]);
 const reactRouterActionMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export type ParsedRouteInfo = StaticInfo<string, string | undefined>;
 
-function collectRouteHandlerCalls(program: Program, locals: Set<string>): CallExpression[] {
-  const calls: CallExpression[] = [];
-  new Visitor({
-    CallExpression(node: CallExpression) {
-      if (node.callee.type !== "Identifier") return;
-      if (!locals.has(node.callee.name)) return;
-      calls.push(node);
-    },
-  }).visit(program);
-  return calls;
-}
-
-function isSameCall(init: Expression | null | undefined, call: CallExpression): boolean {
-  if (!init || init.type !== "CallExpression") return false;
-  return init.start === call.start && init.end === call.end;
-}
-
-function findStatementSpanForCall(
+/** find `const x = $routeHandler(...)` at top level, optionally exported */
+function findMacroCall(
   program: Program,
-  call: CallExpression,
-): { start: number; end: number } | null {
-  for (const stmt of program.body) {
-    const span = statementSpanIfContainsCall(stmt, call);
-    if (span) return span;
-  }
-  return null;
-}
+): { statement: Statement; call: CallExpression; imports: ImportDeclaration[] } | undefined {
+  const locals = new Set<string>();
+  const imports: ImportDeclaration[] = [];
 
-function statementSpanIfContainsCall(
-  stmt: Statement,
-  call: CallExpression,
-): { start: number; end: number } | null {
-  if (stmt.type === "ExportNamedDeclaration" && stmt.declaration?.type === "VariableDeclaration") {
-    for (const d of stmt.declaration.declarations) {
-      if (isSameCall(d.init, call)) return { start: stmt.start, end: stmt.end };
+  for (const statement of program.body) {
+    if (statement.type === "ImportDeclaration") {
+      for (const spec of statement.specifiers) {
+        if (
+          spec.type === "ImportSpecifier" &&
+          (spec.imported.type === "Identifier" ? spec.imported.name : spec.imported.value) ===
+            "$routeHandler"
+        ) {
+          locals.add(spec.local.name);
+          imports.push(statement);
+        }
+      }
+      continue;
+    }
+
+    const declaration =
+      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (declaration?.type !== "VariableDeclaration") continue;
+
+    for (const { init } of declaration.declarations) {
+      if (
+        init?.type === "CallExpression" &&
+        init.callee.type === "Identifier" &&
+        locals.has(init.callee.name)
+      )
+        return { statement, call: init, imports };
     }
   }
-  if (stmt.type === "VariableDeclaration") {
-    for (const d of stmt.declarations) {
-      if (isSameCall(d.init, call)) return { start: stmt.start, end: stmt.end };
-    }
-  }
-  return null;
 }
 
 function objectPropertyKeyName(key: ObjectExpression["properties"][number]): string | null {
@@ -421,6 +411,24 @@ function removeMacroImport(s: MagicString, importDecl: ImportDeclaration): void 
  * Uses framework typegen where applicable: global `RouteContext` (Next typed routes), `ApiContext` (Waku),
  * inferred handler `ctx` (TanStack `createFileRoute`), `Route.LoaderArgs` / `Route.ActionArgs` (React Router `+types`).
  */
+export function buildRouteHandler(
+  content: string,
+  route: string,
+  routeFilePath: string,
+  framework: Framework,
+): string {
+  const result = parseSync(routeFilePath, content);
+  if (result.errors.length > 0) {
+    throw new Error(
+      `failed to parse ${routeFilePath}:\n${result.errors.map((e) => e.message).join("\n")}`,
+    );
+  }
+
+  const s = new MagicString(content);
+  transformRouteHandler(route, routeFilePath, framework, result.program, s);
+  return s.toString();
+}
+
 export function transformRouteHandler(
   route: string,
   routeFilePath: string,
@@ -428,16 +436,10 @@ export function transformRouteHandler(
   program: Program,
   s: MagicString,
 ) {
-  const macro = collectMacroBindings(program, "$routeHandler");
-  if (!macro) return;
+  const found = findMacroCall(program);
+  if (!found) return;
 
-  const calls = collectRouteHandlerCalls(program, macro.locals);
-  if (calls.length === 0) return;
-  if (calls.length > 1) {
-    throw new Error("route-handler.build: expected exactly one $routeHandler(...) call per file");
-  }
-
-  const call = calls[0]!;
+  const { call, statement, imports } = found;
   if (call.arguments.length !== 2) {
     throw new Error("route-handler.build: $routeHandler must be called with (info, handler)");
   }
@@ -452,16 +454,7 @@ export function transformRouteHandler(
   const parsedInfo = parseRouteInfoFromAst(arg0);
   const handler = parseHandlerFromAst(s, arg1);
 
-  const stmtSpan = findStatementSpanForCall(program, call);
-  if (!stmtSpan) {
-    throw new Error(
-      "route-handler.build: $routeHandler(...) must be the initializer of a const (optionally exported)",
-    );
-  }
-
-  for (const decl of macro.importDecls) {
-    removeMacroImport(s, decl);
-  }
+  for (const node of imports) removeMacroImport(s, node);
 
   const extraImports = generateImports(framework, routeFilePath);
   if (extraImports) {
@@ -474,8 +467,8 @@ export function transformRouteHandler(
   }
 
   s.overwrite(
-    stmtSpan.start,
-    stmtSpan.end,
+    statement.start,
+    statement.end,
     generateDeclaration(framework, route, parsedInfo, handler),
   );
 

@@ -1,131 +1,120 @@
 ---
-title: Compiler
-description: More details about compiler.
+title: Registry
+description: Configure the registries to compile.
 ---
 
-## Compile Options
+## Overview
 
-You can pass additional options to the `compile()` function.
-
-```ts
-import { compile } from "fuma-cli/compiler";
-import { registry } from "../registry";
-
-const out = await compile({
-  root: registry,
-  // compile options
-});
-```
-
-### `onUnknownFile`
-
-When component imported a file that is not defined in `files`, this function is called.
-
-- Return a **component file descriptor** to **include** that file.
-- Return **`false`** to treat the import as **external** (leave the import statement as-is).
-- Throw error if `undefined`.
-
-<Callout title="Component File Descriptor">
-  The object that describes how the file should be installed.
-</Callout>
+A registry is a directory of source files that belongs to a package. `compile()` scans it for [sidecars](/compiler/sidecar), follows the imports of each installable file, and returns the output in memory.
 
 ```ts
-import { compile } from "fuma-cli/compiler";
-import { registry } from "../registry";
+import { compile, writeRegistry } from "fuma-cli/compiler";
 
 const out = await compile({
-  root: registry,
-  onUnknownFile(absolutePath) {
-    if (absolutePath.endsWith(".css")) return false;
-
-    return {
-      type: "ui",
-      path: absolutePath,
-    };
+  root: {
+    name: "acme-ui",
+    dir: "packages/ui/src",
   },
 });
+
+await writeRegistry(out, { dir: "public/registry" });
 ```
 
-### `isExternal`
+## Options
 
-Accept a `ref` object. Will keep the import statement as-is if `true` is returned, otherwise continue to resolve the imported file.
+| Option          | Description                                                               |
+| --------------- | ------------------------------------------------------------------------- |
+| `name`          | Unique name, it prefixes file IDs like `acme-ui:button.tsx`.              |
+| `dir`           | The directory to scan for sidecars. File paths are relative to it.        |
+| `entries`       | Source files of package exports, see [below](#entries).                   |
+| `files`         | Install info of files without a sidecar, see [below](#files).             |
+| `external`      | Paths the consumer is expected to own, imports of them are kept as-is.    |
+| `dependencies`  | Override the version of dependencies, `null` for the latest.              |
+| `subRegistries` | Registries compiled together, files can reference each other across them. |
+
+### `entries`
+
+The compiler needs to know which source file is behind each export of your package, to [keep package imports](/compiler/imports) in installed code.
+
+By default, it reads `exports` in `package.json` and maps `dist` to `dir`:
+
+| `exports`                              | Source file                   |
+| -------------------------------------- | ----------------------------- |
+| `"./button": "./dist/button.js"`       | `<dir>/button.tsx` (or `.ts`) |
+| `".": { "import": "./dist/index.js" }` | `<dir>/index.ts`              |
+
+Specify it when your build doesn't mirror the source directory:
 
 ```ts
-import { compile } from "fuma-cli/compiler";
-import { registry } from "../registry";
-
-const out = await compile({
-  root: registry,
-  isExternal(ref) {
-    // externalize CSS files
-    if (ref.type === "file" && ref.file.endsWith(".css")) return true;
-
-    return false;
+const registry: Registry = {
+  name: "acme-ui",
+  dir: "src",
+  entries: {
+    ".": "index.ts",
+    "./button": "components/button.tsx",
   },
-});
+};
 ```
 
-### `onParseReference`
+### `files`
 
-Accept a `ref` object, allow you to rewrite the resolved file before further resolution.
+The same info as a sidecar, keyed by file path. Useful when it can be generated:
 
 ```ts
-import { compile } from "fuma-cli/compiler";
-import { registry } from "../registry";
+import { glob } from "tinyglobby";
+import type { Registry } from "fuma-cli/compiler";
 
-const out = await compile({
-  root: registry,
-  onParseReference(ref) {
-    if (ref.type === "file") {
-      return {
-        ...ref,
-        file: "<my-custom-path>",
-      };
-    }
-
-    return ref;
-  },
-});
+const files: Registry["files"] = {};
+for (const file of await glob("icons/*.tsx", { cwd: "src" })) {
+  files[file] = { type: "components", target: `<dir>/${file}` };
+}
 ```
 
-### `beforeTransform`
+### `external`
 
-Accept file content, absolute file path and a context object. The returned string will be used as content before the default file transformation.
-
-- Return **`undefined`** to keep the original content.
-- Return a **string** to replace the content.
+Some files only exist for your own app, and the consumer has their own version.
 
 ```ts
-import { compile } from "fuma-cli/compiler";
-import { registry } from "../registry";
-
-const out = await compile({
-  root: registry,
-  beforeTransform(content, file, ctx) {
-    if (!file.endsWith(".tsx")) return;
-
-    return content.replaceAll("@/components", "@/registry/components");
-  },
-});
+const registry: Registry = {
+  name: "docs",
+  dir: ".",
+  // `import { source } from "@/lib/source"` is kept as-is
+  external: ["lib/source.ts"],
+};
 ```
 
-### `afterTransform`
+### `dependencies`
 
-Accept file content, absolute file path and a context object. The returned string will be used as content after the default file transformation.
+Versions are taken from `package.json` of the registry (`dependencies`, `peerDependencies`, then `devDependencies`).
 
-- Return **`undefined`** to keep the transformed content.
-- Return a **string** to replace the content.
+- Packages of registries in the same compilation use their current version.
+- Protocols like `workspace:*` are replaced with the installed version.
+- A package only listed as `@types/*` is added as a dev dependency.
 
 ```ts
-import { compile } from "fuma-cli/compiler";
-import { registry } from "../registry";
-
-const out = await compile({
-  root: registry,
-  afterTransform(content, file, ctx) {
-    if (ctx.component.name !== "button") return;
-
-    return `/* generated code */\n${content}`;
+const registry: Registry = {
+  name: "acme-ui",
+  dir: "src",
+  dependencies: {
+    // always the latest
+    "acme-core": null,
+    // inlined by our bundler, but needed by installed files
+    "fast-content-type-parse": "^3.0.0",
   },
-});
+};
 ```
+
+## Sub Registries
+
+```ts
+const registry: Registry = {
+  name: "acme",
+  dir: "apps/docs",
+  subRegistries: [
+    { name: "acme/ui", dir: "packages/ui/src" },
+    { name: "acme/charts", dir: "packages/charts/src" },
+  ],
+};
+```
+
+A file in `acme/charts` can import `acme-ui/button` or `../../ui/src/button`, both resolve to the same installable file.

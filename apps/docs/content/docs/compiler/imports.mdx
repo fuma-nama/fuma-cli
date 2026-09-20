@@ -1,0 +1,75 @@
+---
+title: Imports
+description: How the compiler handles each import of an installable file.
+---
+
+## Resolution
+
+The compiler collects an **import record** for each reference in a file, then resolves it, including `tsconfig` paths.
+
+| Kind               | Syntax                                       |
+| ------------------ | -------------------------------------------- |
+| `import-statement` | `import ... from "x"`, `export ... from "x"` |
+| `dynamic-import`   | `import("x")`                                |
+| `new-url`          | `new URL("./x", import.meta.url)`            |
+
+| The import resolves to                               | Installed code                                 |
+| ---------------------------------------------------- | ---------------------------------------------- |
+| a Node.js built-in, or a macro                       | unchanged                                      |
+| a package outside of registries                      | unchanged, added to dependencies               |
+| a path under [`external`](/compiler#external)        | unchanged                                      |
+| a file with sidecar                                  | relative import of the installed file          |
+| a file with [`preserve`](/compiler/sidecar#preserve) | package import, or relative if installed       |
+| a file exported by its package                       | package import                                 |
+| a file in the same directory or below                | [inherited](/compiler/sidecar#inherited-files) |
+| anything else                                        | compilation error                              |
+
+## Package Imports
+
+Installed code often needs things that must stay in your package, like React contexts, which are only the same instance when imported from the package.
+
+You don't declare them. The compiler follows the re-exports of each [entry](/compiler#entries), and knows where every name is publicly available.
+
+```ts title="src/index.ts"
+export * from "./context";
+export { useTheme as useAcmeTheme } from "./theme";
+```
+
+```tsx title="src/card/index.tsx (source)"
+import { useCtx } from "../context";
+import { useTheme, type Theme } from "../theme";
+import * as icons from "../icons";
+```
+
+```tsx title="components/card/index.tsx (installed)"
+import { useCtx } from "acme-ui";
+import { useAcmeTheme as useTheme, type Theme } from "acme-ui";
+import * as icons from "acme-ui/icons";
+```
+
+- Names are matched individually, renamed exports are handled.
+- Namespace, side-effect and dynamic imports need the file to be an entry itself.
+- When a name is exported from multiple entries, the first one in `exports` wins.
+- Private packages (`"private": true`) are never imported, their files need a sidecar.
+
+### Errors
+
+An import that cannot be installed nor swapped fails the compilation, with all problems reported at once:
+
+```
+src/card/index.tsx: "../theme" has no sidecar, and internalOnly of it is not a
+public export of "acme-ui". Add theme.install.ts, or export it from the package.
+```
+
+This is checked against your source, so a registry never ships an import that your package doesn't satisfy.
+
+## Cross-Registry Imports
+
+Imports of another registry in the same compilation follow the same table, whether written as a relative path or a package specifier.
+
+```tsx title="packages/charts/src/chart.tsx"
+// installable -> relative import of the installed button
+import { Button } from "acme-ui/button";
+// not installable, but an entry -> unchanged
+import { useCtx } from "acme-ui";
+```
