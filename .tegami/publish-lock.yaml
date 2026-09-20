@@ -1,0 +1,25 @@
+core:changelogs:
+  - content: "---\npackages:\n  npm:fuma-cli:\n    type: patch\n---\n\n## Glob entries of components\n\n`entry` of a component accepts glob patterns. With `*` in the name, each matched file becomes its own component:\n\n```ts\nconst components: Registry[\"components\"] = {\n  icons: \"icons/*.tsx\",\n  \"icons/*\": { unlisted: true, entry: \"icons/*.tsx\" },\n};\n```\n\nPatterns of `files` are matched by [picomatch](https://github.com/micromatch/picomatch), compiled once per pattern.\n\n## `reuseUI` plugin\n\nA built-in installer plugin to use the UI components that consumer already has, exported from `fuma-cli/registry/installer`. Plugins can read `this.outDir`.\n\n## Catch mistakes of `files`\n\n- A pattern without globs fails the compilation when the file doesn't exist, like after a rename.\n- Two files of the same name installed to the same location by a rule without `target` fail the compilation.\n\n## `required` of `DependencyManager`\n\n`deps.required` and `deps.requiredDev` are the missing packages with their versions, no need to decode `deps.dependencies`.\n"
+    filename: 2026-09-21-glob-entries.md
+    v: 0.0.0
+  - content: "---\npackages:\n  npm:@fuma-cli/interactive:\n    type: patch\n---\n\n## Rename to `InteractiveInstaller`\n\n`FumadocsComponentInstaller` is kept as a deprecated alias. The constructor accepts `io` to override the prompts.\n"
+    filename: 2026-09-21-interactive-installer.md
+    v: 0.0.0
+core:packages:
+  - id: npm:root
+    updated: false
+  - id: npm:docs
+    updated: false
+  - changelogIds:
+      - 2026-09-21-glob-entries.md
+    id: npm:fuma-cli
+    updated: true
+  - changelogIds:
+      - 2026-09-21-interactive-installer.md
+    id: npm:@fuma-cli/interactive
+    updated: true
+npm:packages:
+  - id: npm:root
+  - id: npm:docs
+  - id: npm:fuma-cli
+  - id: npm:@fuma-cli/interactive

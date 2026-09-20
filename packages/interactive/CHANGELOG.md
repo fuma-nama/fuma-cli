@@ -1,3 +1,9 @@
+## @fuma-cli/interactive@0.1.2
+
+### Rename to `InteractiveInstaller`
+
+`FumadocsComponentInstaller` is kept as a deprecated alias. The constructor accepts `io` to override the prompts.
+
 ## 0.1.1
 
 ### Patch Changes
