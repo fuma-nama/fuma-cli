@@ -13,15 +13,15 @@
     "test": "vitest"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.31.0",
-    "oxfmt": "^0.47.0",
-    "oxlint": "^1.62.0",
-    "turbo": "^2.9.6",
+    "@changesets/cli": "^3.0.3",
+    "oxfmt": "^0.68.0",
+    "oxlint": "^1.83.0",
+    "turbo": "^2.11.2",
     "typescript": "6.0.3",
-    "vitest": "^4.1.5"
+    "vitest": "^5.0.1"
   },
   "engines": {
     "node": ">=22"
   },
-  "packageManager": "pnpm@9.6.0"
+  "packageManager": "pnpm@12.5.1"
 }

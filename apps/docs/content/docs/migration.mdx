@@ -14,7 +14,7 @@ description: Move a v1 registry and installer to v2.
 
 Remove `components` from your `Registry`, and describe each listed file in a [sidecar](/compiler/sidecar) next to it.
 
-```ts title="registry.ts (v1)"
+```ts tab="v1" title="registry.ts"
 export const registry: Registry = {
   name: "acme-ui",
   dir,
@@ -28,14 +28,16 @@ export const registry: Registry = {
 };
 ```
 
-```ts title="registry.ts (v2)"
+```ts tab="v2" title="registry.ts"
 export const registry: Registry = {
   name: "acme-ui",
   dir: path.join(dir, "src"),
 };
 ```
 
-```ts title="src/button.install.ts (v2)"
+And a sidecar next to the file it describes:
+
+```ts title="src/button.install.ts"
 import { defineInstall } from "fuma-cli/compiler";
 
 export default defineInstall({

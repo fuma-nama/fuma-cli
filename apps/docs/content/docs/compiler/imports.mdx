@@ -35,13 +35,13 @@ export * from "./context";
 export { useTheme as useAcmeTheme } from "./theme";
 ```
 
-```tsx title="src/card/index.tsx (source)"
+```tsx tab="Source" title="src/card/index.tsx"
 import { useCtx } from "../context";
 import { useTheme, type Theme } from "../theme";
 import * as icons from "../icons";
 ```
 
-```tsx title="components/card/index.tsx (installed)"
+```tsx tab="Installed" title="components/card/index.tsx"
 import { useCtx } from "acme-ui";
 import { useAcmeTheme as useTheme, type Theme } from "acme-ui";
 import * as icons from "acme-ui/icons";

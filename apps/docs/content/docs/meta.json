@@ -5,10 +5,9 @@
     "index",
     "quick-start",
     "macros",
+    "migration",
     "---Reference---",
     "compiler",
-    "installer",
-    "---Updates---",
-    "v2"
+    "installer"
   ]
 }
