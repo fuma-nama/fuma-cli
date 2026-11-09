@@ -1,17 +1,17 @@
 core:changelogs:
-  - content: "---\npackages:\n  fuma-cli:\n    type: patch\n---\n\n### Parse with Babel\n\n- The compiler and the installer parse code with Babel instead of Yuku, so `fuma-cli` needs no native binding.\n- CLIs that bundle `fuma-cli` need no extra dependencies.\n"
-    filename: 2026-11-09-babel-installer.md
+  - content: "---\npackages:\n  \"@fuma-cli/interactive\":\n    type: patch\n---\n\n### Drop picocolors\n\n- Colors use Node.js `util.styleText`, so `@fuma-cli/interactive` no longer depends on `picocolors`.\n"
+    filename: 2026-11-09-drop-picocolors.md
     v: 0.0.0
 core:packages:
   - id: npm:root
     updated: false
   - id: npm:docs
     updated: false
+  - id: npm:fuma-cli
+    updated: false
   - changelogIds:
-      - 2026-11-09-babel-installer.md
-    id: npm:fuma-cli
-    updated: true
-  - id: npm:@fuma-cli/interactive
+      - 2026-11-09-drop-picocolors.md
+    id: npm:@fuma-cli/interactive
     updated: true
 npm:packages:
   - id: npm:root
