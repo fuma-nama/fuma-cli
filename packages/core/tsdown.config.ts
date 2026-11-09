@@ -11,7 +11,7 @@ export default defineConfig({
   ],
   plugins: [typia()],
   format: "esm",
-  dts: true,
+  dts: { sourcemap: false },
   fixedExtension: false,
   target: "es2023",
   deps: {
