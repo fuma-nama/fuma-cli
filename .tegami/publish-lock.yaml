@@ -1,6 +1,6 @@
 core:changelogs:
-  - content: "---\npackages:\n  fuma-cli:\n    type: patch\n  \"@fuma-cli/interactive\":\n    type: patch\n---\n\n### Smaller packages\n\n- Published files no longer include source maps.\n"
-    filename: 2026-11-09-no-source-maps.md
+  - content: "---\npackages:\n  fuma-cli:\n    type: patch\n---\n\n### Parse with Babel\n\n- The compiler and the installer parse code with Babel instead of Yuku, so `fuma-cli` needs no native binding.\n- CLIs that bundle `fuma-cli` need no extra dependencies.\n"
+    filename: 2026-11-09-babel-installer.md
     v: 0.0.0
 core:packages:
   - id: npm:root
@@ -8,12 +8,10 @@ core:packages:
   - id: npm:docs
     updated: false
   - changelogIds:
-      - 2026-11-09-no-source-maps.md
+      - 2026-11-09-babel-installer.md
     id: npm:fuma-cli
     updated: true
-  - changelogIds:
-      - 2026-11-09-no-source-maps.md
-    id: npm:@fuma-cli/interactive
+  - id: npm:@fuma-cli/interactive
     updated: true
 npm:packages:
   - id: npm:root
