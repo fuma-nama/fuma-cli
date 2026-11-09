@@ -1,3 +1,9 @@
+## @fuma-cli/interactive@0.1.6
+
+### Drop picocolors
+
+- Colors use Node.js `util.styleText`, so `@fuma-cli/interactive` no longer depends on `picocolors`.
+
 ## @fuma-cli/interactive@0.1.4
 
 ### Smaller packages
