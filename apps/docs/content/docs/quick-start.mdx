@@ -59,10 +59,13 @@ Serve the output, here we assume it is available at `https://acme-ui.com/registr
 Initialize your own CLI package and install dependencies:
 
 ```npm
-npm i fuma-cli @clack/prompts
+npm i @clack/prompts yuku-analyzer@^0.10.2
+npm i -D fuma-cli
 ```
 
 Fuma CLI installer is headless, we will use `@clack/prompts` for the TUI.
+
+Bundle your CLI, for example with tsdown: it bundles dev dependencies, so your users only download the installer code you use. Keep `yuku-analyzer` in `dependencies` with the range `fuma-cli` depends on. Its native binding can't be bundled.
 
 ```ts title="my-cli/src/install.ts"
 import { ComponentInstaller } from "fuma-cli/registry/installer";
