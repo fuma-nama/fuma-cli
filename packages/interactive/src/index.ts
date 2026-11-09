@@ -16,7 +16,7 @@ import {
   type SpinnerResult,
 } from "@clack/prompts";
 import path from "node:path";
-import picocolors from "picocolors";
+import { styleText } from "node:util";
 import { detectPackageManager } from "fuma-cli/detect";
 
 export class InteractiveInstaller extends ComponentInstaller {
@@ -43,7 +43,7 @@ export class InteractiveInstaller extends ComponentInstaller {
             outro("Installation terminated");
             process.exit(0);
           }
-          spin.start(picocolors.bold(picocolors.cyanBright(`Installing ${name}`)));
+          spin.start(styleText(["bold", "cyanBright"], `Installing ${name}`));
           return value;
         },
         onFileWritten: (file) => {
@@ -72,7 +72,7 @@ export class InteractiveInstaller extends ComponentInstaller {
       return options;
     };
 
-    spin.stop(picocolors.bold(picocolors.greenBright("registry fetched")));
+    spin.stop(styleText(["bold", "greenBright"], "registry fetched"));
     const value = await autocompleteMultiselect({
       message: "Select components to install",
       options: (await Promise.all([scan(), ...subRegistries.map(scan)])).flat(),
@@ -87,7 +87,7 @@ export class InteractiveInstaller extends ComponentInstaller {
       await this.installInteractive(target.name, target.registry);
     }
 
-    outro(picocolors.bold(picocolors.greenBright("Successful")));
+    outro(styleText(["bold", "greenBright"], "Successful"));
   }
 
   async installInteractive(name: string, registry?: string): Promise<void> {
@@ -96,12 +96,12 @@ export class InteractiveInstaller extends ComponentInstaller {
     }
 
     const spin = spinner();
-    spin.start(picocolors.bold(picocolors.cyanBright(`Installing ${name}`)));
+    spin.start(styleText(["bold", "cyanBright"], `Installing ${name}`));
 
     try {
       this.interactive = { name, spin };
       const deps = await super.install(name, registry).then((res) => res.deps());
-      spin.stop(picocolors.bold(picocolors.greenBright(`${name} installed`)));
+      spin.stop(styleText(["bold", "greenBright"], `${name} installed`));
 
       if (deps.hasRequired()) {
         log.message();

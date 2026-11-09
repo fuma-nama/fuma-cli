@@ -27,8 +27,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.8.1",
-    "fuma-cli": "workspace:*",
-    "picocolors": "^1.1.1"
+    "fuma-cli": "workspace:*"
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",
