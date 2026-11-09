@@ -1,4 +1,4 @@
-import type { Import, Symbol } from "yuku-analyzer";
+import type { Binding, Import } from "yuku-analyzer";
 import type { StmtInfo } from "@/registry/schema";
 import { SCRIPT_EXTS } from "@/constants";
 import { analyzeFile } from "@/utils/analyze";
@@ -58,7 +58,7 @@ export function scan(file: string, code: string, treeshake = false): ScanResult 
   // specifier start -> import
   const imports = new Map<number, ImportRecord>();
   const exports: ExportRecord[] = [];
-  const importOf = new Map<Symbol, Import>();
+  const importOf = new Map<Binding, Import>();
 
   /** @param name - `undefined` for the whole module */
   function addImport(
@@ -86,9 +86,9 @@ export function scan(file: string, code: string, treeshake = false): ScanResult 
       continue;
     }
 
-    const declaration = item.isSideEffect ? node : module.parentOf(node);
+    const declaration = item.kind === "sideEffect" ? node : module.parentOf(node);
     if (declaration?.type !== "ImportDeclaration") continue;
-    const imported = item.isSideEffect ? undefined : (item.name ?? "*");
+    const imported = item.kind === "sideEffect" ? undefined : (item.name ?? "*");
     const record = addImport("import-statement", declaration.source, imported);
     record.declaration ??= { start: declaration.start, end: declaration.end, bindings: [] };
     if (imported === undefined) continue;
@@ -124,7 +124,7 @@ export function scan(file: string, code: string, treeshake = false): ScanResult 
   }
 
   for (const item of module.exports) {
-    const name = item.isStar ? "*" : item.name!;
+    const name = item.kind === "star" ? "*" : item.name!;
     if (item.specifier === null) {
       // `import { a } from "x"; export { a }`
       const origin = item.local && importOf.get(item.local);

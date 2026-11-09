@@ -1,4 +1,4 @@
-import type { Module, Symbol } from "yuku-analyzer";
+import type { Binding, Module } from "yuku-analyzer";
 import { analyzeFile } from "@/utils/analyze";
 import type { StmtInfo } from "@/registry/schema";
 
@@ -14,7 +14,7 @@ export function stmtAt(stmts: StmtInfo[], pos: number): number {
   return low;
 }
 
-/** Symbol analysis of top-level statements. */
+/** Binding analysis of top-level statements. */
 export function scanStmts(module: Module, code: string): StmtInfo[] {
   const { body } = module.ast;
   const stmts: StmtInfo[] = [];
@@ -44,16 +44,16 @@ export function scanStmts(module: Module, code: string): StmtInfo[] {
     if (!declares.includes(name)) declares.push(name);
   }
 
-  // a symbol has several declarations when overloaded or merged
-  const owners = new Map<Symbol, number[]>();
-  for (const symbol of module.rootScope.bindings) {
+  // a binding has several declarations when overloaded or merged
+  const owners = new Map<Binding, number[]>();
+  for (const binding of module.rootScope.bindings) {
     const indices: number[] = [];
-    for (const node of symbol.declarations) {
+    for (const node of binding.declarations) {
       const i = stmtAt(stmts, node.start);
       if (!indices.includes(i)) indices.push(i);
-      declare(i, symbol.name);
+      declare(i, binding.name);
     }
-    owners.set(symbol, indices);
+    owners.set(binding, indices);
   }
 
   for (const item of module.exports) {
@@ -61,7 +61,7 @@ export function scanStmts(module: Module, code: string): StmtInfo[] {
   }
 
   for (const ref of module.references) {
-    const indices = ref.symbol && owners.get(ref.symbol);
+    const indices = ref.binding && owners.get(ref.binding);
     if (!indices) continue;
     const i = stmtAt(stmts, ref.node.start);
     const references = (stmts[i].references ??= []);
@@ -79,7 +79,7 @@ export function scanDeclared(
 ): { names: Set<string>; importEnd: number } {
   const module = analyzeFile(file, code);
   const names = new Set(module.exportedNames());
-  for (const symbol of module.rootScope.bindings) names.add(symbol.name);
+  for (const binding of module.rootScope.bindings) names.add(binding.name);
 
   let importEnd = 0;
   for (const stmt of module.ast.body) {

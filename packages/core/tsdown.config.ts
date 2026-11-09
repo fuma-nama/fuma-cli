@@ -1,4 +1,4 @@
-import typia from "@typia/unplugin/rolldown";
+import ttsc from "@ttsc/unplugin/rolldown";
 import { defineConfig } from "tsdown";
 
 export default defineConfig({
@@ -9,7 +9,7 @@ export default defineConfig({
     "./src/macros/route-handler.ts",
     "./src/compiler/index.ts",
   ],
-  plugins: [typia()],
+  plugins: [ttsc()],
   format: "esm",
   dts: { sourcemap: false },
   fixedExtension: false,
