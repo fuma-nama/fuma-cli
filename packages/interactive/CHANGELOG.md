@@ -1,3 +1,9 @@
+## @fuma-cli/interactive@0.1.4
+
+### Smaller packages
+
+- Published files no longer include source maps.
+
 ## @fuma-cli/interactive@0.1.3
 
 ### Show relative paths

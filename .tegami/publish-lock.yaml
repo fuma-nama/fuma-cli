@@ -1,9 +1,6 @@
 core:changelogs:
-  - content: "---\npackages:\n  npm:fuma-cli:\n    type: patch\n---\n\n## Faster compilation\n\nEach file is resolved to its registry and rule once, compiling the registry of Fumadocs takes 9% less time. The output is unchanged.\n\n## `file.output` in `resolveId`\n\nThe `resolveId` hook of installer plugins receives the default location of file as `file.output`.\n\n## Link imports of `.mts` & `.mjs` files\n\nThe installer left the imports of installed `.mts` & `.mjs` files unlinked, they are now treated like other scripts.\n"
-    filename: 2026-09-21-faster-compile.md
-    v: 0.0.0
-  - content: "---\npackages:\n  npm:@fuma-cli/interactive:\n    type: patch\n---\n\n## Show relative paths\n\nThe override prompt and the progress of `InteractiveInstaller` show file paths relative to `cwd`, instead of absolute paths.\n"
-    filename: 2026-09-21-relative-paths.md
+  - content: "---\npackages:\n  fuma-cli:\n    type: patch\n  \"@fuma-cli/interactive\":\n    type: patch\n---\n\n### Smaller packages\n\n- Published files no longer include source maps.\n"
+    filename: 2026-11-09-no-source-maps.md
     v: 0.0.0
 core:packages:
   - id: npm:root
@@ -11,11 +8,11 @@ core:packages:
   - id: npm:docs
     updated: false
   - changelogIds:
-      - 2026-09-21-faster-compile.md
+      - 2026-11-09-no-source-maps.md
     id: npm:fuma-cli
     updated: true
   - changelogIds:
-      - 2026-09-21-relative-paths.md
+      - 2026-11-09-no-source-maps.md
     id: npm:@fuma-cli/interactive
     updated: true
 npm:packages:

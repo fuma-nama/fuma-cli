@@ -1,3 +1,9 @@
+## fuma-cli@0.3.3
+
+### Smaller packages
+
+- Published files no longer include source maps.
+
 ## fuma-cli@0.3.2
 
 ### Faster compilation
