@@ -1,17 +1,16 @@
 import path from "node:path";
 import MagicString from "magic-string";
 import type {
-  Argument,
   CallExpression,
+  FunctionExpression,
   ImportDeclaration,
   ObjectExpression,
-  FunctionParameter,
   Program,
-  ProgramStatement,
-} from "@yuku-toolchain/types";
+  Statement,
+} from "@babel/types";
 import type { Framework } from "@/constants";
 import type { RouteHandlerHttpMethod, StaticInfo } from "./route-handler";
-import { analyzeFile } from "@/utils/analyze";
+import { nameOf, parseFile } from "@/utils/parse";
 import { dedent, indent } from "@/utils/format";
 
 const reactRouterLoaderMethods = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -22,18 +21,14 @@ export type ParsedRouteInfo = StaticInfo<string, string | undefined>;
 /** find `const x = $routeHandler(...)` at top level, optionally exported */
 function findMacroCall(
   program: Program,
-): { statement: ProgramStatement; call: CallExpression; imports: ImportDeclaration[] } | undefined {
+): { statement: Statement; call: CallExpression; imports: ImportDeclaration[] } | undefined {
   const locals = new Set<string>();
   const imports: ImportDeclaration[] = [];
 
   for (const statement of program.body) {
     if (statement.type === "ImportDeclaration") {
       for (const spec of statement.specifiers) {
-        if (
-          spec.type === "ImportSpecifier" &&
-          (spec.imported.type === "Identifier" ? spec.imported.name : spec.imported.value) ===
-            "$routeHandler"
-        ) {
+        if (spec.type === "ImportSpecifier" && nameOf(spec.imported) === "$routeHandler") {
           locals.add(spec.local.name);
           imports.push(statement);
         }
@@ -57,10 +52,10 @@ function findMacroCall(
 }
 
 function objectPropertyKeyName(key: ObjectExpression["properties"][number]): string | null {
-  if (key.type !== "Property") return null;
+  if (key.type !== "ObjectProperty") return null;
   const k = key.key;
   if (k.type === "Identifier") return k.name;
-  if (k.type === "Literal" && typeof k.value === "string") return k.value;
+  if (k.type === "StringLiteral") return k.value;
   return null;
 }
 
@@ -73,7 +68,7 @@ function parseRouteInfoFromAst(info: ObjectExpression): ParsedRouteInfo {
   let catchAll: string | undefined;
 
   for (const prop of info.properties) {
-    if (prop.type !== "Property") continue;
+    if (prop.type !== "ObjectProperty") continue;
     const name = objectPropertyKeyName(prop);
     if (name === "methods") {
       if (prop.value.type !== "ArrayExpression") {
@@ -84,7 +79,7 @@ function parseRouteInfoFromAst(info: ObjectExpression): ParsedRouteInfo {
       const out: string[] = [];
       for (const el of prop.value.elements) {
         if (el == null) continue;
-        if (el.type === "Literal" && typeof el.value === "string") {
+        if (el.type === "StringLiteral") {
           out.push(el.value);
           continue;
         }
@@ -101,7 +96,7 @@ function parseRouteInfoFromAst(info: ObjectExpression): ParsedRouteInfo {
       const out: string[] = [];
       for (const el of prop.value.elements) {
         if (el == null) continue;
-        if (el.type === "Literal" && typeof el.value === "string") {
+        if (el.type === "StringLiteral") {
           out.push(el.value);
           continue;
         }
@@ -110,7 +105,7 @@ function parseRouteInfoFromAst(info: ObjectExpression): ParsedRouteInfo {
       params = out;
     }
     if (name === "catchAll") {
-      if (prop.value.type === "Literal" && typeof prop.value.value === "string") {
+      if (prop.value.type === "StringLiteral") {
         catchAll = prop.value.value;
         continue;
       }
@@ -143,7 +138,7 @@ function encodeKey(key: string): string {
   return key;
 }
 
-function bindingNameFromParam(p: FunctionParameter): string | null {
+function bindingNameFromParam(p: FunctionExpression["params"][number]): string | null {
   if (p.type === "Identifier") return p.name;
   return null;
 }
@@ -154,7 +149,10 @@ interface HandlerInfo {
   bodyText: string;
 }
 
-function parseHandlerFromAst(s: MagicString, expr: Argument): HandlerInfo {
+function parseHandlerFromAst(
+  s: MagicString,
+  expr: CallExpression["arguments"][number],
+): HandlerInfo {
   const isFn = expr.type === "FunctionExpression";
   const isArrow = expr.type === "ArrowFunctionExpression";
   if (!isFn && !isArrow) {
@@ -191,11 +189,11 @@ function parseHandlerFromAst(s: MagicString, expr: Argument): HandlerInfo {
     throw new Error("route-handler.build: handler has no body");
   } else if (body.type === "BlockStatement") {
     bodyText = s.original
-      .slice(body.start + 1, body.end - 1)
+      .slice(body.start! + 1, body.end! - 1)
       .replace(/^\s*?\n/, "")
       .replace(/\n\s*?$/, "");
   } else if (fn.type === "ArrowFunctionExpression") {
-    const expr = s.original.slice(body.start, body.end);
+    const expr = s.original.slice(body.start!, body.end!);
     bodyText = `return ${expr};`;
   } else {
     throw new Error("route-handler.build: could not extract handler body");
@@ -399,8 +397,8 @@ function generateDeclaration(
 }
 
 function removeMacroImport(s: MagicString, importDecl: ImportDeclaration): void {
-  const start = importDecl.start;
-  let end = importDecl.end;
+  const start = importDecl.start!;
+  let end = importDecl.end!;
   if (s.original[end] === "\n") end += 1;
   s.remove(start, end);
 }
@@ -422,7 +420,7 @@ export function buildRouteHandler(
     route,
     routeFilePath,
     framework,
-    analyzeFile(routeFilePath, content).ast,
+    parseFile(routeFilePath, content).program,
     s,
   );
   return s.toString();
@@ -466,8 +464,8 @@ function transformRouteHandler(
   }
 
   s.overwrite(
-    statement.start,
-    statement.end,
+    statement.start!,
+    statement.end!,
     generateDeclaration(framework, route, parsedInfo, handler),
   );
 
@@ -479,6 +477,6 @@ function findInsertPositionForNewImports(program: Program): number {
     (stmt): stmt is ImportDeclaration => stmt.type === "ImportDeclaration",
   );
 
-  if (last) return last.end;
+  if (last) return last.end!;
   return 0;
 }

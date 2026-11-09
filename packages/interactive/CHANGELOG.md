@@ -1,4 +1,20 @@
-# @fuma-cli/interactive
+## @fuma-cli/interactive@0.1.4
+
+### Smaller packages
+
+- Published files no longer include source maps.
+
+## @fuma-cli/interactive@0.1.3
+
+### Show relative paths
+
+The override prompt and the progress of `InteractiveInstaller` show file paths relative to `cwd`, instead of absolute paths.
+
+## @fuma-cli/interactive@0.1.2
+
+### Rename to `InteractiveInstaller`
+
+`FumadocsComponentInstaller` is kept as a deprecated alias. The constructor accepts `io` to override the prompts.
 
 ## 0.1.1
 

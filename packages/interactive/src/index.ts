@@ -15,16 +15,19 @@ import {
   type Option,
   type SpinnerResult,
 } from "@clack/prompts";
+import path from "node:path";
 import picocolors from "picocolors";
-import { detect } from "package-manager-detector";
+import { detectPackageManager } from "fuma-cli/detect";
 
-export class FumadocsComponentInstaller extends ComponentInstaller {
+export class InteractiveInstaller extends ComponentInstaller {
   private interactive: {
     name: string;
     spin: SpinnerResult;
   } | null = null;
 
-  constructor(connector: RegistryConnector, config: Omit<ComponentInstallerOptions, "io">) {
+  constructor(connector: RegistryConnector, config: ComponentInstallerOptions = {}) {
+    const toRelative = (file: string) => path.relative(config.cwd ?? process.cwd(), file);
+
     super(connector, {
       ...config,
       io: {
@@ -33,7 +36,7 @@ export class FumadocsComponentInstaller extends ComponentInstaller {
           const { name, spin } = this.interactive;
           spin.clear();
           const value = await confirm({
-            message: `Do you want to override ${options.output}?`,
+            message: `Do you want to override ${toRelative(options.output)}?`,
             initialValue: false,
           });
           if (isCancel(value)) {
@@ -44,8 +47,9 @@ export class FumadocsComponentInstaller extends ComponentInstaller {
           return value;
         },
         onFileWritten: (file) => {
-          this.interactive?.spin.message(file.output);
+          this.interactive?.spin.message(toRelative(file.output));
         },
+        ...config.io,
       },
     });
   }
@@ -102,7 +106,7 @@ export class FumadocsComponentInstaller extends ComponentInstaller {
       if (deps.hasRequired()) {
         log.message();
         box([...deps.dependencies, ...deps.devDependencies].join("\n"), "New Dependencies");
-        const pm = (await detect())?.name ?? "npm";
+        const pm = (await detectPackageManager())?.name ?? "npm";
         const value = await confirm({
           message: `Do you want to install with ${pm}?`,
         });
@@ -131,3 +135,6 @@ export class FumadocsComponentInstaller extends ComponentInstaller {
     }
   }
 }
+
+/** @deprecated use `InteractiveInstaller` */
+export { InteractiveInstaller as FumadocsComponentInstaller };

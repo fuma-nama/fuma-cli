@@ -1,4 +1,57 @@
-# fuma-cli
+## fuma-cli@0.3.4
+
+### Parse with Babel
+
+- The compiler and the installer parse code with Babel instead of Yuku, so `fuma-cli` needs no native binding.
+- CLIs that bundle `fuma-cli` need no extra dependencies.
+
+## fuma-cli@0.3.3
+
+### Smaller packages
+
+- Published files no longer include source maps.
+
+## fuma-cli@0.3.2
+
+### Faster compilation
+
+Each file is resolved to its registry and rule once, compiling the registry of Fumadocs takes 9% less time. The output is unchanged.
+
+### `file.output` in `resolveId`
+
+The `resolveId` hook of installer plugins receives the default location of file as `file.output`.
+
+### Link imports of `.mts` & `.mjs` files
+
+The installer left the imports of installed `.mts` & `.mjs` files unlinked, they are now treated like other scripts.
+
+## fuma-cli@0.3.1
+
+### Glob entries of components
+
+`entry` of a component accepts glob patterns. With `*` in the name, each matched file becomes its own component:
+
+```ts
+const components: Registry["components"] = {
+  icons: "icons/*.tsx",
+  "icons/*": { unlisted: true, entry: "icons/*.tsx" },
+};
+```
+
+Patterns of `files` are matched by [picomatch](https://github.com/micromatch/picomatch), compiled once per pattern.
+
+### `reuseUI` plugin
+
+A built-in installer plugin to use the UI components that consumer already has, exported from `fuma-cli/registry/installer`. Plugins can read `this.outDir`.
+
+### Catch mistakes of `files`
+
+- A pattern without globs fails the compilation when the file doesn't exist, like after a rename.
+- Two files of the same name installed to the same location by a rule without `target` fail the compilation.
+
+### `required` of `DependencyManager`
+
+`deps.required` and `deps.requiredDev` are the missing packages with their versions, no need to decode `deps.dependencies`.
 
 ## 0.3.0
 

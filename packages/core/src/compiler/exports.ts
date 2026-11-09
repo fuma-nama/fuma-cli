@@ -1,4 +1,4 @@
-import type { ScanResult } from "./scan";
+import type { ImportRecord, ScanResult } from "./scan";
 
 export interface PublicName {
   specifier: string;
@@ -85,4 +85,71 @@ export function buildExportIndex(
   }
 
   return index;
+}
+
+/** an import of `specifier`, a rewritten `declaration`, or the bindings `missing` from the package */
+export interface PackageImport {
+  specifier?: string;
+  declaration?: string;
+  missing?: string[];
+}
+
+/**
+ * @param file - the imported file
+ * @returns the package import of `record`, or bindings that the package doesn't export.
+ */
+export function toPackageImport(
+  index: ExportIndex,
+  file: string,
+  record: ImportRecord,
+  quote: string,
+): PackageImport {
+  const entry = index.modules.get(file);
+  if (entry) return { specifier: entry };
+  if (!record.bindings) return { missing: ["*"] };
+
+  const missing: string[] = [];
+  let specifier: string | undefined;
+  let renamed = false;
+  for (const name of record.bindings) {
+    const found = index.names.get(nameKey(file, name));
+    if (!found) {
+      missing.push(name);
+      continue;
+    }
+
+    renamed ||= found.name !== name || (specifier !== undefined && specifier !== found.specifier);
+    specifier = found.specifier;
+  }
+
+  if (missing.length > 0) return { missing };
+  if (!renamed) return { specifier: specifier! };
+  if (!record.declaration) return { missing: record.bindings };
+
+  // specifier -> import clause
+  const clauses = new Map<string, { default?: string; named: string[] }>();
+  for (const binding of record.declaration.bindings) {
+    const found = index.names.get(nameKey(file, binding.imported))!;
+    let clause = clauses.get(found.specifier);
+    if (!clause) {
+      clause = { named: [] };
+      clauses.set(found.specifier, clause);
+    }
+
+    if (found.name === "default" && !binding.isType) clause.default = binding.local;
+    else {
+      const text =
+        found.name === binding.local ? binding.local : `${found.name} as ${binding.local}`;
+      clause.named.push(binding.isType ? `type ${text}` : text);
+    }
+  }
+
+  const lines: string[] = [];
+  for (const [k, clause] of clauses) {
+    const parts: string[] = [];
+    if (clause.default) parts.push(clause.default);
+    if (clause.named.length > 0) parts.push(`{ ${clause.named.join(", ")} }`);
+    lines.push(`import ${parts.join(", ")} from ${quote}${k}${quote};`);
+  }
+  return { declaration: lines.join("\n") };
 }

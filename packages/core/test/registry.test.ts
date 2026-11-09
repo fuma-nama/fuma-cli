@@ -4,7 +4,7 @@ import os from "node:os";
 import { expect, test, vi } from "vitest";
 import { compile, writeRegistry, type Registry } from "@/compiler";
 import { LocalRegistryConnector } from "@/registry/connector";
-import { ComponentInstaller, type InstallPlan } from "@/registry/installer";
+import { ComponentInstaller, reuseUI, type InstallPlan } from "@/registry/installer";
 
 const fixtures = path.join(import.meta.dirname, "fixtures/registry");
 const registry: Registry = {
@@ -202,5 +202,82 @@ test("entry without a rule", async () => {
     compile({ root: { ...registry, components: { theme: ["theme.ts", "../package.json"] } } }),
   ).rejects.toThrow(
     /"theme.ts" of component "theme" matches no rule in `files`[^]*"..\/package.json" of component "theme" matches no rule/,
+  );
+});
+
+test("glob entries", async () => {
+  const out = await compile({
+    root: {
+      ...shake,
+      components: { all: "*.{ts,tsx}", "ui/*": { unlisted: true, entry: "*.tsx" } },
+    },
+  });
+
+  expect(out.manifest.components).toEqual([
+    { name: "all", files: ["all.ts", "input.tsx", "nav-link.tsx"] },
+    { name: "ui/input", unlisted: true, files: ["input.tsx"] },
+    { name: "ui/nav-link", unlisted: true, files: ["nav-link.tsx"] },
+  ]);
+
+  await expect(compile({ root: { ...shake, components: { icons: "icons/*" } } })).rejects.toThrow(
+    /cannot find "icons\/\*" of component "icons"/,
+  );
+});
+
+test("rule of a missing file", async () => {
+  await expect(
+    compile({ root: { ...shake, files: { ...shake.files, "renamed.tsx": { type: "ui" } } } }),
+  ).rejects.toThrow(/cannot find "renamed.tsx" of `files`/);
+});
+
+test("files flattened to the same location", async () => {
+  await expect(
+    compile({
+      root: {
+        ...registry,
+        components: { both: ["button.tsx", "card/button.tsx"] },
+        files: { "**/button.tsx": { type: "ui" } },
+      },
+    }),
+  ).rejects.toThrow(/button.tsx: installed to the same location as .*button.tsx, set `target`/);
+});
+
+test("reuse the UI components of consumer", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fuma-cli-"));
+  await writeRegistry(await compile({ root: registry }), { dir: path.join(dir, "registry") });
+  const cwd = path.join(dir, "app");
+  await fs.mkdir(path.join(cwd, "components/ui"), { recursive: true });
+  await fs.writeFile(path.join(cwd, "components/ui/button.tsx"), "export const Button = 'mine';");
+
+  const installer = new ComponentInstaller(new LocalRegistryConnector(path.join(dir, "registry")), {
+    cwd,
+    framework: "none",
+    plugins: [reuseUI({ files: { "utils/cn.ts": "lib/utils" } })],
+  });
+  const plan = await installer.install("card");
+
+  expect(plan.files.map((file) => path.relative(cwd, file.output)).sort()).toEqual([
+    "components/card/index.tsx",
+    "components/card/parts.tsx",
+  ]);
+  expect(await fs.readFile(path.join(cwd, "components/card/index.tsx"), "utf-8")).toContain(
+    'from "../ui/button"',
+  );
+
+  const deps = await plan.deps();
+  expect(deps.required).toEqual({ "acme-ui": "^1.2.0" });
+  expect(deps.dependencies).toEqual(["acme-ui@^1.2.0"]);
+
+  await fs.rm(path.join(cwd, "components/ui/button.tsx"));
+  const button = await new ComponentInstaller(
+    new LocalRegistryConnector(path.join(dir, "registry")),
+    { cwd, framework: "none", plugins: [reuseUI({ files: { "utils/cn.ts": "lib/utils" } })] },
+  ).install("button");
+
+  expect(button.files.map((file) => path.relative(cwd, file.output))).toEqual([
+    "components/ui/button.tsx",
+  ]);
+  expect(await fs.readFile(path.join(cwd, "components/ui/button.tsx"), "utf-8")).toContain(
+    'from "../../lib/utils"',
   );
 });

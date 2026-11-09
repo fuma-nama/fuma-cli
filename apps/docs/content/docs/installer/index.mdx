@@ -47,6 +47,8 @@ const deps = await plan.deps();
 if (deps.hasRequired()) await deps.installRequired(); // runs detected package manager
 ```
 
+`deps.required` and `deps.requiredDev` are the missing packages with their versions, `deps.writeRequired()` only adds them to `package.json`.
+
 ### Plan & Apply
 
 `install()` is a shorthand of two steps:

@@ -20,7 +20,7 @@ export function routeHandlerPlugin(): InstallerPlugin {
     },
     async transform(code, file) {
       if (file.info.type !== "route-handler") return;
-      const { buildRouteHandler } = await import("./route-handler.build");
+      const { buildRouteHandler } = await import("@/macros/route-handler.build");
       return buildRouteHandler(code, file.info.route, file.output, await this.getFramework());
     },
     async writeBundle(files) {

@@ -1,6 +1,6 @@
 {
   "name": "@fuma-cli/interactive",
-  "version": "0.1.1",
+  "version": "0.1.5",
   "description": "Pre-built interactive interface for Fuma CLI",
   "keywords": [],
   "homepage": "https://cli.fuma-nama.dev",
@@ -28,14 +28,13 @@
   "dependencies": {
     "@clack/prompts": "^1.8.1",
     "fuma-cli": "workspace:*",
-    "package-manager-detector": "^1.8.0",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",
-    "@types/node": "26.6.2",
+    "@types/node": "26.6.6",
     "fuma-cli": "workspace:*",
-    "tsdown": "0.23.0",
-    "vitest": "^5.0.1"
+    "tsdown": "0.23.7",
+    "vitest": "^5.1.0"
   }
 }
