@@ -1,3 +1,10 @@
+## fuma-cli@0.3.4
+
+### Parse with Babel
+
+- The compiler and the installer parse code with Babel instead of Yuku, so `fuma-cli` needs no native binding.
+- CLIs that bundle `fuma-cli` need no extra dependencies.
+
 ## fuma-cli@0.3.3
 
 ### Smaller packages
