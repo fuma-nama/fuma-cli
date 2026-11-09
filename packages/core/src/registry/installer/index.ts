@@ -177,7 +177,7 @@ export class ComponentInstaller {
             ? await fs.readFile(file.output, "utf-8").catch(() => undefined)
             : undefined;
         if (code !== undefined) {
-          const { scanDeclared } = await import("@/compiler/stmt");
+          const { scanDeclared } = await import("@/utils/parse");
           entry.merge = { code, ...scanDeclared(file.output, code) };
         }
       }

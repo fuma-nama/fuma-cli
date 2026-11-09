@@ -1,12 +1,12 @@
 import fs from "node:fs/promises";
 import MagicString from "magic-string";
 import type {
-  Argument,
   ArrayExpression,
-  ExportDefaultDeclarationKind,
+  CallExpression,
+  ExportDefaultDeclaration,
   Expression,
   Program,
-} from "@yuku-toolchain/types";
+} from "@babel/types";
 import type { Framework } from "@/constants";
 
 /**
@@ -69,7 +69,7 @@ function tsSingleQuotedLiteral(value: string): string {
 }
 
 function unwrapExportDefaultToArrayExpression(
-  decl: ExportDefaultDeclarationKind,
+  decl: ExportDefaultDeclaration["declaration"],
 ): ArrayExpression | null {
   if (decl.type === "FunctionDeclaration" || decl.type === "ClassDeclaration") {
     return null;
@@ -86,9 +86,8 @@ function unwrapExportDefaultToArrayExpression(
   return null;
 }
 
-function parseStringArgument(expr: Argument | undefined): string | null {
-  if (!expr) return null;
-  if (expr.type === "Literal" && typeof expr.value === "string") return expr.value;
+function parseStringArgument(expr: CallExpression["arguments"][number] | undefined): string | null {
+  if (expr?.type === "StringLiteral") return expr.value;
   return null;
 }
 
@@ -166,8 +165,8 @@ export async function addReactRouterRouteToFile(
   spec: AddReactRouterRouteToFileInput,
   write = true,
 ): Promise<AddReactRouterRouteToFileResult> {
-  const { analyzeFile } = await import("@/utils/analyze");
-  const array = findReactRouterRoutesArray(analyzeFile(routesFilePath, content).ast);
+  const { parseFile } = await import("@/utils/parse");
+  const array = findReactRouterRoutesArray(parseFile(routesFilePath, content).program);
   if (!array) {
     throw new Error(
       `addReactRouterRouteToFile: no export default array found in ${routesFilePath}`,
@@ -201,9 +200,9 @@ export async function addReactRouterRouteToFile(
   );
 
   if (!insertAt) {
-    s.appendRight(array.start + 1, `\n  ${line},\n`);
+    s.appendRight(array.start! + 1, `\n  ${line},\n`);
   } else {
-    s.appendRight(insertAt.expression.end, `,\n  ${line}`);
+    s.appendRight(insertAt.expression.end!, `,\n  ${line}`);
   }
 
   const out = s.toString();

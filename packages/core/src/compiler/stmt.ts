@@ -1,6 +1,6 @@
-import type { Binding, Module } from "yuku-analyzer";
-import { analyzeFile } from "@/utils/analyze";
+import type { File, Node } from "@babel/types";
 import type { StmtInfo } from "@/registry/schema";
+import { scanStatement } from "@/utils/parse";
 
 /** @returns index of the statement at `pos` */
 export function stmtAt(stmts: StmtInfo[], pos: number): number {
@@ -14,24 +14,42 @@ export function stmtAt(stmts: StmtInfo[], pos: number): number {
   return low;
 }
 
-/** Binding analysis of top-level statements. */
-export function scanStmts(module: Module, code: string): StmtInfo[] {
-  const { body } = module.ast;
+export function walk(node: Node, enter: (node: Node, parent: Node, key: string) => void) {
+  for (const key in node) {
+    // positions, parser metadata and attached comments hold no child nodes
+    if (key === "loc" || key === "extra" || key.endsWith("Comments")) continue;
+    const value = (node as unknown as Record<string, unknown>)[key];
+    for (const child of Array.isArray(value) ? value : [value]) {
+      if (typeof child?.type !== "string") continue;
+      enter(child, node, key);
+      walk(child, enter);
+    }
+  }
+}
+
+/**
+ * Binding analysis of top-level statements.
+ *
+ * A statement references every top-level binding its identifiers name. Shadowing is not resolved,
+ * so a local name that shadows a top-level binding only selects an extra statement.
+ */
+export function scanStmts({ program, comments }: File, code: string): StmtInfo[] {
+  const body = [...program.directives, ...program.body];
   const stmts: StmtInfo[] = [];
 
   // spans partition the file: a statement owns the lines before it, up to the line of the previous statement
   let c = 0;
   for (let i = 0; i < body.length; i++) {
-    const limit = body[i].start;
+    const limit = body[i].start!;
     const nextLine = (pos: number) => {
       const idx = code.indexOf("\n", pos);
       return idx === -1 || idx > limit ? limit : idx;
     };
 
-    let start = i === 0 ? 0 : nextLine(body[i - 1].end);
-    for (; c < module.comments.length && module.comments[c].end <= limit; c++) {
-      const comment = module.comments[c];
-      if (comment.start < start && comment.end > start) start = nextLine(comment.end);
+    let start = i === 0 ? 0 : nextLine(body[i - 1].end!);
+    for (; comments && c < comments.length && comments[c].end! <= limit; c++) {
+      const comment = comments[c];
+      if (comment.start! < start && comment.end! > start) start = nextLine(comment.end!);
     }
 
     if (i > 0) stmts[i - 1].end = start;
@@ -39,55 +57,67 @@ export function scanStmts(module: Module, code: string): StmtInfo[] {
     if (body[i].type === "ImportDeclaration") stmts[i].import = true;
   }
 
-  function declare(i: number, name: string) {
-    const declares = (stmts[i].declares ??= []);
-    if (!declares.includes(name)) declares.push(name);
-  }
-
   // a binding has several declarations when overloaded or merged
-  const owners = new Map<Binding, number[]>();
-  for (const binding of module.rootScope.bindings) {
-    const indices: number[] = [];
-    for (const node of binding.declarations) {
-      const i = stmtAt(stmts, node.start);
-      if (!indices.includes(i)) indices.push(i);
-      declare(i, binding.name);
+  const owners = new Map<string, number[]>();
+  for (let i = 0; i < body.length; i++) {
+    const stmt = body[i];
+    if (stmt.type === "Directive") continue;
+    const bindings = new Set<string>();
+    const exported = new Set<string>();
+    scanStatement(stmt, bindings, exported);
+
+    for (const name of bindings) {
+      const indices = owners.get(name);
+      if (indices) indices.push(i);
+      else owners.set(name, [i]);
     }
-    owners.set(binding, indices);
+    const declares = new Set([...bindings, ...exported]);
+    if (declares.size > 0) stmts[i].declares = Array.from(declares);
   }
 
-  for (const item of module.exports) {
-    if (item.name) declare(stmtAt(stmts, item.node.start), item.name);
-  }
-
-  for (const ref of module.references) {
-    const indices = ref.binding && owners.get(ref.binding);
-    if (!indices) continue;
-    const i = stmtAt(stmts, ref.node.start);
-    const references = (stmts[i].references ??= []);
-    for (const j of indices) if (j !== i && !references.includes(j)) references.push(j);
+  for (let i = 0; i < body.length; i++) {
+    const references = new Set<number>();
+    walk(body[i], (node, parent, key) => {
+      if (node.type !== "Identifier" && node.type !== "JSXIdentifier") return;
+      if (!isReference(parent, key)) return;
+      for (const j of owners.get(node.name) ?? []) if (j !== i) references.add(j);
+    });
+    if (references.size > 0) stmts[i].references = Array.from(references);
   }
   return stmts;
 }
 
-/**
- * @returns the top-level names of a file (export names included), and the position to insert imports at.
- */
-export function scanDeclared(
-  file: string,
-  code: string,
-): { names: Set<string>; importEnd: number } {
-  const module = analyzeFile(file, code);
-  const names = new Set(module.exportedNames());
-  for (const binding of module.rootScope.bindings) names.add(binding.name);
-
-  let importEnd = 0;
-  for (const stmt of module.ast.body) {
-    if (
-      stmt.type === "ImportDeclaration" ||
-      (stmt.type === "ExpressionStatement" && stmt.directive)
-    )
-      importEnd = stmt.end;
+/** whether an identifier at `parent[key]` may name a binding */
+function isReference(parent: Node, key: string): boolean {
+  switch (parent.type) {
+    case "MemberExpression":
+    case "OptionalMemberExpression":
+    case "ObjectProperty":
+    case "ObjectMethod":
+    case "ClassProperty":
+    case "ClassMethod":
+    case "ClassAccessorProperty":
+    case "TSPropertySignature":
+    case "TSMethodSignature":
+    case "TSDeclareMethod":
+      return parent.computed || (key !== "property" && key !== "key");
+    case "JSXMemberExpression":
+      return key !== "property";
+    case "TSQualifiedName":
+      return key !== "right";
+    case "ImportSpecifier":
+      return key !== "imported";
+    case "ExportSpecifier":
+    case "ExportNamespaceSpecifier":
+      return key !== "exported";
+    case "JSXAttribute":
+    case "JSXNamespacedName":
+    case "LabeledStatement":
+    case "BreakStatement":
+    case "ContinueStatement":
+    case "TSEnumMember":
+      return false;
+    default:
+      return true;
   }
-  return { names, importEnd };
 }

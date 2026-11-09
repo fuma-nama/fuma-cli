@@ -1,8 +1,8 @@
-import type { Binding, Import } from "yuku-analyzer";
+import type { Node } from "@babel/types";
 import type { StmtInfo } from "@/registry/schema";
 import { SCRIPT_EXTS } from "@/constants";
-import { analyzeFile } from "@/utils/analyze";
-import { scanStmts } from "./stmt";
+import { nameOf, parseFile, scanStatement } from "@/utils/parse";
+import { scanStmts, walk } from "./stmt";
 
 export type ImportKind = "import-statement" | "dynamic-import" | "new-url";
 
@@ -49,29 +49,24 @@ export function isScannable(ext: string): boolean {
 }
 
 /**
- * It reads the import & export records of analyzer, AST nodes are only decoded for their spans.
- *
  * @param treeshake - rewrite import declarations to have one binding each, and analyze statements
  */
 export function scan(file: string, code: string, treeshake = false): ScanResult {
-  const module = analyzeFile(file, code);
+  const ast = parseFile(file, code);
   // specifier start -> import
   const imports = new Map<number, ImportRecord>();
   const exports: ExportRecord[] = [];
-  const importOf = new Map<Binding, Import>();
+  // local name -> what it imports
+  const importOf = new Map<string, NonNullable<ExportRecord["from"]>>();
 
   /** @param name - `undefined` for the whole module */
-  function addImport(
-    kind: ImportKind,
-    source: { start: number; end: number },
-    name?: string,
-  ): ImportRecord {
-    let record = imports.get(source.start);
+  function addImport(kind: ImportKind, source: Node, name?: string): ImportRecord {
+    let record = imports.get(source.start!);
     if (!record) {
-      const start = source.start + 1;
-      const end = source.end - 1;
+      const start = source.start! + 1;
+      const end = source.end! - 1;
       record = { kind, specifier: code.slice(start, end), start, end, bindings: [] };
-      imports.set(source.start, record);
+      imports.set(source.start!, record);
     }
 
     if (name === undefined || name === "*") record.bindings = undefined;
@@ -79,26 +74,29 @@ export function scan(file: string, code: string, treeshake = false): ScanResult 
     return record;
   }
 
-  for (const item of module.imports) {
-    const { node } = item;
-    if (node.type === "ImportExpression") {
-      addImport("dynamic-import", node.source);
+  for (const stmt of ast.program.body) {
+    if (stmt.type !== "ImportDeclaration") continue;
+    const declaration = { start: stmt.start!, end: stmt.end!, bindings: [] };
+    if (stmt.specifiers.length === 0) {
+      addImport("import-statement", stmt.source).declaration ??= declaration;
       continue;
     }
 
-    const declaration = item.kind === "sideEffect" ? node : module.parentOf(node);
-    if (declaration?.type !== "ImportDeclaration") continue;
-    const imported = item.kind === "sideEffect" ? undefined : (item.name ?? "*");
-    const record = addImport("import-statement", declaration.source, imported);
-    record.declaration ??= { start: declaration.start, end: declaration.end, bindings: [] };
-    if (imported === undefined) continue;
-
-    importOf.set(item.local!, item);
-    record.declaration.bindings.push({
-      imported,
-      local: item.local!.name,
-      isType: item.typeOnly,
-    });
+    for (const spec of stmt.specifiers) {
+      let imported = "*";
+      if (spec.type === "ImportDefaultSpecifier") imported = "default";
+      else if (spec.type === "ImportSpecifier") imported = nameOf(spec.imported);
+      const record = addImport("import-statement", stmt.source, imported);
+      record.declaration ??= declaration;
+      importOf.set(spec.local.name, { specifier: record.specifier, name: imported });
+      record.declaration.bindings.push({
+        imported,
+        local: spec.local.name,
+        isType:
+          stmt.importKind === "type" ||
+          (spec.type === "ImportSpecifier" && spec.importKind === "type"),
+      });
+    }
   }
 
   if (treeshake) {
@@ -123,51 +121,68 @@ export function scan(file: string, code: string, treeshake = false): ScanResult 
     if (last > 0) return scan(file, out + code.slice(last), true);
   }
 
-  for (const item of module.exports) {
-    const name = item.kind === "star" ? "*" : item.name!;
-    if (item.specifier === null) {
+  for (const stmt of ast.program.body) {
+    if (stmt.type === "ExportAllDeclaration") {
+      exports.push({ name: "*", from: { specifier: stmt.source.value, name: "*" } });
+      addImport("import-statement", stmt.source);
+    } else if (stmt.type === "ExportNamedDeclaration" && stmt.source) {
+      for (const spec of stmt.specifiers) {
+        const fromName = spec.type === "ExportSpecifier" ? nameOf(spec.local) : "*";
+        exports.push({
+          name: nameOf(spec.exported),
+          from: { specifier: stmt.source.value, name: fromName },
+        });
+        addImport("import-statement", stmt.source, fromName);
+      }
+    } else if (stmt.type === "ExportNamedDeclaration" || stmt.type === "ExportDefaultDeclaration") {
       // `import { a } from "x"; export { a }`
-      const origin = item.local && importOf.get(item.local);
-      exports.push(
-        origin
-          ? { name, from: { specifier: origin.specifier, name: origin.name ?? "*" } }
-          : { name },
-      );
-      continue;
+      const locals = new Map<string, string>();
+      if (stmt.type === "ExportDefaultDeclaration") {
+        if (stmt.declaration.type === "Identifier") locals.set("default", stmt.declaration.name);
+      } else {
+        for (const spec of stmt.specifiers) {
+          if (spec.type === "ExportSpecifier")
+            locals.set(nameOf(spec.exported), nameOf(spec.local));
+        }
+      }
+
+      const names = new Set<string>();
+      scanStatement(stmt, new Set(), names);
+      for (const name of names) {
+        const local = locals.get(name);
+        const origin = local === undefined ? undefined : importOf.get(local);
+        exports.push(origin ? { name, from: origin } : { name });
+      }
+    }
+  }
+
+  walk(ast.program, (node) => {
+    if (
+      node.type === "ImportExpression" &&
+      (node.source.type === "StringLiteral" ||
+        (node.source.type === "TemplateLiteral" && node.source.expressions.length === 0))
+    ) {
+      addImport("dynamic-import", node.source);
+      return;
     }
 
-    const fromName = item.fromName ?? "*";
-    const declaration =
-      item.node.type === "ExportAllDeclaration" ? item.node : module.parentOf(item.node);
-    exports.push({ name, from: { specifier: item.specifier, name: fromName } });
+    // new URL("./file", import.meta.url)
+    if (node.type !== "NewExpression") return;
+    const [url, base] = node.arguments;
     if (
-      declaration?.type === "ExportAllDeclaration" ||
-      declaration?.type === "ExportNamedDeclaration"
-    )
-      addImport("import-statement", declaration.source!, fromName);
-  }
-
-  // new URL("./file", import.meta.url)
-  if (module.moduleFlags.usesImportMeta) {
-    module.walk({
-      NewExpression({ callee, arguments: [url, base] }) {
-        if (
-          callee.type === "Identifier" &&
-          callee.name === "URL" &&
-          url?.type === "Literal" &&
-          typeof url.value === "string" &&
-          base?.type === "MemberExpression" &&
-          base.object.type === "MetaProperty"
-        ) {
-          addImport("new-url", url);
-        }
-      },
-    });
-  }
+      node.callee.type === "Identifier" &&
+      node.callee.name === "URL" &&
+      url?.type === "StringLiteral" &&
+      base?.type === "MemberExpression" &&
+      base.object.type === "MetaProperty"
+    ) {
+      addImport("new-url", url);
+    }
+  });
 
   return {
     code,
-    stmts: treeshake ? scanStmts(module, code) : undefined,
+    stmts: treeshake ? scanStmts(ast, code) : undefined,
     imports: Array.from(imports.values()),
     exports,
   };

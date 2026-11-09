@@ -24,7 +24,7 @@ The stages and terms follow bundlers like [Rolldown](https://rolldown.rs), so th
 [Tree-shaken](/compiler/files#treeshake) modules do more in the same scan: import declarations are split per binding, and statements are analyzed. Generate only shifts their spans by the edits.
 
 - **Module**: an installable file. **External**: left to a package, or to the consumer.
-- Scanning reads the import/export records of the analyzer, it doesn't walk the AST. Statements are only indexed for tree-shaken modules.
+- Scanning reads import and export declarations at the top level, and walks the AST once for dynamic imports and `new URL()`. Statements are only indexed for tree-shaken modules.
 - The export index of a package is built on first use.
 - There is no chunking: a component is only a named list of files.
 
@@ -92,31 +92,30 @@ Modelled on `StmtInfo` of Rolldown, one entry per top-level statement of a tree-
 - Statements partition the file: selecting every statement gives back the whole file.
 - The installer starts from statements declaring a requested binding, or declaring nothing, and follows `references`.
 - An entry of `imports` belongs to the statement containing its span. Only imports of selected statements are followed.
+- `references` come from the names a statement uses. Shadowing is not resolved, so a local variable named like a top-level binding only selects one more statement.
 
 ## Toolchain
 
-| Task                      | Tool                                                       |
-| ------------------------- | ---------------------------------------------------------- |
-| Parsing & symbol analysis | [`yuku-analyzer`](https://yuku.fyi), in `utils/analyze.ts` |
-| Resolution                | `oxc-resolver`                                             |
+| Task       | Tool                                                                         |
+| ---------- | ---------------------------------------------------------------------------- |
+| Parsing    | [`@babel/parser`](https://babeljs.io/docs/babel-parser), in `utils/parse.ts` |
+| Resolution | `oxc-resolver`                                                               |
 
-One native toolchain covers every need: import/export records for scanning, resolved symbols for [statement info](#statement-info), and the AST for macros. The installer only loads it for a merge, a route handler, or a React Router config.
+One parser serves the compiler and the installer. It is pure JavaScript, so a CLI bundles the installer without native bindings. The installer only parses for a merge, a route handler, or a React Router config.
 
-Measured on 318 files (1 MB) of Fumadocs:
+Measured on 1567 files (4.9 MB) of Fumadocs:
 
-| Task                                        | Time  |
-| ------------------------------------------- | ----- |
-| `oxc-parser`, module record                 | 27 ms |
-| `yuku-analyzer`, import/export records      | 21 ms |
-| `yuku-analyzer`, records + spans (our scan) | 26 ms |
-| `yuku-analyzer`, decoding top-level AST     | 61 ms |
+| Scan                    | Records | Tree-shaken |
+| ----------------------- | ------- | ----------- |
+| `@babel/parser` (ours)  | 155 ms  | 297 ms      |
+| `yuku-analyzer`, native | 74 ms   | 171 ms      |
 
-- Nodes are decoded lazily, so scanning reads records and only decodes the nodes it needs a span from.
+- A native analyzer scans twice as fast, about 100 ms less on these files, but every installer would carry its platform binding of about 1 MB.
 - **Codegen** is not used: printing an unmodified AST changed 49% of lines in 188 files (blank lines, JSX & import wrapping). Installed code is meant to be read and diffed, so we edit spans of the original text.
 
 ### Resolver
 
-Yuku has no resolver. The compiler needs relative imports with extension probing (`./foo.js` to `foo.ts` included), `paths` of the nearest `tsconfig.json` with `extends` and `references`, and `imports` of `package.json`. Measured on the 1653 imports of the same files:
+Babel has no resolver. The compiler needs relative imports with extension probing (`./foo.js` to `foo.ts` included), `paths` of the nearest `tsconfig.json` with `extends` and `references`, and `imports` of `package.json`. Measured on the 1653 imports of the same files:
 
 | Resolver                     | Cold  | Warm  | Notes                                            |
 | ---------------------------- | ----- | ----- | ------------------------------------------------ |
